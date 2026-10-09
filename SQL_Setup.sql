@@ -67,11 +67,12 @@ CREATE TABLE IF NOT EXISTS project_materials (
     material VARCHAR(100),
     supplier VARCHAR(100),
     supplier_contact VARCHAR(255),
-    quantity DECIMAL(10, 2),
+    quantity INT,
     location VARCHAR(1000),
     article_no VARCHAR(100),
     material_size VARCHAR(50),
     uom VARCHAR(10),
+    color VARCHAR(50),
     notes TEXT,
 
     FOREIGN KEY (colorway_id)
@@ -89,7 +90,7 @@ CREATE TABLE IF NOT EXISTS points_measured (
     sizes VARCHAR(10),
     measure VARCHAR(10),
     grade VARCHAR(10),
-    notes TEXT,
+    notes VARCHAR(1000),
 
     FOREIGN KEY (project_id)
         REFERENCES projects(id)
