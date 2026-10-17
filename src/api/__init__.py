@@ -41,7 +41,7 @@ def create_app(test_config=None):
     from src.api.routes.main import main_bp
 
     app.register_blueprint(main_bp)
-    app.register_blueprint(auth_bp)
+    app.register_blueprint(auth_bp, url_prefix="/api")
 
     
     return app
