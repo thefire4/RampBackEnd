@@ -18,6 +18,15 @@ class User(UserMixin, db.Model):
         db.String(255),
         nullable = False
     )
+    role = db.Column(
+        db.String(20),
+        nullable = False,
+        default = "user"
+    )
+    
+    @property
+    def is_admin(self):
+        return self.role == "admin"
 
 from .extensions import login_manager
 
