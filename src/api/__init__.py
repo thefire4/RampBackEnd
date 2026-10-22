@@ -49,11 +49,13 @@ def create_app(test_config=None):
     from src.api.routes.main import main_bp
     from src.api.routes.admin import admin_bp
     from src.api.routes.account import account_bp
+    from src.api.routes.projects import projects_bp
 
     app.register_blueprint(main_bp, url_prefix="/api")
     app.register_blueprint(auth_bp, url_prefix="/api")
     app.register_blueprint(admin_bp, url_prefix="/api")
     app.register_blueprint(account_bp, url_prefix="/api")
+    app.register_blueprint(projects_bp, url_prefix="/api")
 
     
     return app
