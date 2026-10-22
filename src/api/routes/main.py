@@ -12,5 +12,6 @@ def health():
 def profile():
     return {
         "id": current_user.id,
-        "username": current_user.username
+        "username": current_user.username,
+        "role": current_user.role
     }, 200
