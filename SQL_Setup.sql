@@ -74,6 +74,9 @@ CREATE TABLE IF NOT EXISTS project_materials (
     uom VARCHAR(10),
     color VARCHAR(50),
     notes TEXT,
+    import_source_file VARCHAR(255),
+    import_source_row INT,
+    import_field_sources TEXT,
 
     FOREIGN KEY (colorway_id)
         REFERENCES project_colors(id)

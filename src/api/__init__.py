@@ -9,14 +9,16 @@ from sqlalchemy import text
 
 
 
-
 def create_app(test_config=None):
     app = Flask(__name__)
 
     app.config.update(
-        SECRET_KEY = os.environ["SECRET_KEY"],
-        SQLALCHEMY_DATABASE_URI = os.environ["DATABASE_URL"],
-        SQLALCHEMY_TRACK_MODIFICATIONS = False,
+        SECRET_KEY=os.environ.get("SECRET_KEY", "dev-secret-key"),
+        SQLALCHEMY_DATABASE_URI=os.environ.get(
+            "DATABASE_URL",
+            "mysql+mysqlconnector://root:password@127.0.0.1/RampCoreOs",
+        ),
+        SQLALCHEMY_TRACK_MODIFICATIONS=False,
 
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SECURE=False, #This is for development only!! Set to True when using in production
@@ -49,11 +51,15 @@ def create_app(test_config=None):
     from src.api.routes.main import main_bp
     from src.api.routes.admin import admin_bp
     from src.api.routes.account import account_bp
+    from src.api.routes.projects import projects_bp
+
+    app.config.setdefault("UPLOAD_FOLDER", "uploads")
 
     app.register_blueprint(main_bp, url_prefix="/api")
     app.register_blueprint(auth_bp, url_prefix="/api")
     app.register_blueprint(admin_bp, url_prefix="/api")
     app.register_blueprint(account_bp, url_prefix="/api")
+    app.register_blueprint(projects_bp, url_prefix="/api")
 
     
     return app
