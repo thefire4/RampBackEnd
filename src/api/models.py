@@ -18,6 +18,7 @@ class User(UserMixin, db.Model):
         return self.role == "admin"
 
 
+# Project tables are defined in SQL_Setup.sql; these models map onto them.
 class Project(db.Model):
     __tablename__ = "projects"
 
@@ -34,6 +35,7 @@ class Project(db.Model):
     designer = db.Column(db.String(100))
     weight = db.Column(db.String(100))
     description = db.Column(db.String(1000))
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
 
     colorways = db.relationship(
         "ProjectColor",
@@ -73,8 +75,8 @@ class ProjectMaterial(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     colorway_id = db.Column(
         db.Integer,
-        db.ForeignKey("project_colors.id"),
-        nullable=False,
+        db.ForeignKey("project_colors.id", ondelete="CASCADE"),
+        nullable=False
     )
     name = db.Column(db.String(50))
     material = db.Column(db.String(100))
@@ -87,6 +89,8 @@ class ProjectMaterial(db.Model):
     uom = db.Column(db.String(10))
     color = db.Column(db.String(50))
     notes = db.Column(db.Text)
+
+from .extensions import login_manager
     import_source_file = db.Column(db.String(255))
     import_source_row = db.Column(db.Integer)
     import_field_sources = db.Column(db.Text)

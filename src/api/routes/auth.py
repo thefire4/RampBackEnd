@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 auth_bp = Blueprint("auth", __name__)
 
-@auth_bp.route("/api/csrf-token", methods=["GET"])
+@auth_bp.route("/csrf-token", methods=["GET"])
 def get_csrf_token():
     return jsonify({"csrf_token": generate_csrf()})
 

@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS projects (
     fabric_yarn VARCHAR(100),
     designer VARCHAR(100),
     weight VARCHAR(100),
-    description VARCHAR(1000)
+    description VARCHAR(1000),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Users assigned to projects (many-to-many)
