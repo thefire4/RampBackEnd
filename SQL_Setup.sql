@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS project_materials (
     uom VARCHAR(10),
     color VARCHAR(50),
     notes TEXT,
+    import_source_file VARCHAR(255),
+    import_source_row INT,
+    import_field_sources TEXT,
+    status ENUM('delayed', 'awaiting', 'in stock'),
 
     FOREIGN KEY (colorway_id)
         REFERENCES project_colors(id)
@@ -137,4 +141,24 @@ CREATE TABLE IF NOT EXISTS comments (
     FOREIGN KEY (file_id)
         REFERENCES files(id)
         ON DELETE SET NULL
+);
+
+-- Project chanage log
+CREATE TABLE project_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    project_id INT NOT NULL,
+    user_id INT NULL, 
+    action VARCHAR(50) NOT NULL, 
+    entity_type VARCHAR(50) NOT NULL,
+    entity_id INT,
+    field_name VARCHAR(100),
+    old_value VARCHAR(1000),
+    new_value VARCHAR(1000), 
+    changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id)
+        REFERENCES users(id)
+	ON DELETE CASCADE,
+    FOREIGN KEY (user_id)
+	REFERENCES users(id)
+	ON DELETE SET NULL, 
 );

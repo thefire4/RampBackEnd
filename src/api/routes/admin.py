@@ -61,7 +61,7 @@ def create_user():
         username = username,
         email = email,
         password_hash=generate_password_hash(password),
-        role=role
+        role=role,
     )
     
     try:
