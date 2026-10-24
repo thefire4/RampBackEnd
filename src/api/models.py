@@ -89,8 +89,6 @@ class ProjectMaterial(db.Model):
     uom = db.Column(db.String(10))
     color = db.Column(db.String(50))
     notes = db.Column(db.Text)
-
-from .extensions import login_manager
     import_source_file = db.Column(db.String(255))
     import_source_row = db.Column(db.Integer)
     import_field_sources = db.Column(db.Text)
