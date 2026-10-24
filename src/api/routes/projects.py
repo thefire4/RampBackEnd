@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify
 from flask_login import login_required
 from sqlalchemy import func, or_
+import math
 
 from src.api.extensions import db
 from src.api.models import Project, ProjectColor, ProjectMaterial
@@ -21,14 +22,59 @@ def _blank(column):
     return func.coalesce(func.trim(column), "") == ""
 
 
-# A BOM item counts as missing when any key field hasn't been filled in.
-# Change this one rule if the team settles on a different definition.
+# Keep this rule aligned with the required material details in materials.ts.
 MISSING_BOM_ITEM = or_(
     _blank(ProjectMaterial.material),
     _blank(ProjectMaterial.supplier),
+    _blank(ProjectMaterial.supplier_contact),
+    _blank(ProjectMaterial.location),
+    _blank(ProjectMaterial.material_size),
     _blank(ProjectMaterial.color),
-    ProjectMaterial.quantity.is_(None),
+    _blank(ProjectMaterial.uom),
+    ProjectMaterial.quantity.is_(None) | (ProjectMaterial.quantity <= 0),
 )
+
+EDITABLE_MATERIAL_FIELDS = {
+    "name",
+    "material",
+    "supplier",
+    "supplier_contact",
+    "quantity",
+    "location",
+    "article_no",
+    "material_size",
+    "uom",
+    "color",
+    "notes",
+}
+
+
+def _missing_bom_count(project_id: int) -> int:
+    count = (
+        db.session.query(func.count(ProjectMaterial.id))
+        .join(ProjectColor, ProjectMaterial.colorway_id == ProjectColor.id)
+        .filter(ProjectColor.project_id == project_id, MISSING_BOM_ITEM)
+        .scalar()
+    )
+    return int(count or 0)
+
+
+def _material_payload(material: ProjectMaterial) -> dict:
+    return {
+        "id": material.id,
+        "colorway_id": material.colorway_id,
+        "name": material.name,
+        "material": material.material,
+        "supplier": material.supplier,
+        "supplier_contact": material.supplier_contact,
+        "quantity": material.quantity,
+        "location": material.location,
+        "article_no": material.article_no,
+        "material_size": material.material_size,
+        "uom": material.uom,
+        "color": material.color,
+        "notes": material.notes,
+    }
 
 
 @projects_bp.route("/projects", methods=["GET"])
@@ -87,6 +133,49 @@ def create_project():
     db.session.add(project)
     db.session.commit()
     return jsonify({"project": _project_payload(project)}), 201
+
+
+@projects_bp.route("/materials/<int:material_id>", methods=["PATCH"])
+@login_required
+def update_material(material_id: int):
+    material = db.session.get(ProjectMaterial, material_id)
+    if material is None:
+        return jsonify({"error": "BOM line not found."}), 404
+
+    changes = request.get_json(silent=True)
+    if not isinstance(changes, dict) or not changes:
+        return jsonify({"error": "Provide at least one BOM field to update."}), 400
+
+    unknown_fields = set(changes) - EDITABLE_MATERIAL_FIELDS
+    if unknown_fields:
+        return jsonify({"error": "One or more BOM fields cannot be edited."}), 400
+
+    for field, value in changes.items():
+        if field == "quantity":
+            if value is None:
+                material.quantity = None
+                continue
+            if isinstance(value, bool):
+                return jsonify({"error": "Quantity must be a non-negative number."}), 400
+            try:
+                quantity = float(value)
+            except (TypeError, ValueError):
+                return jsonify({"error": "Quantity must be a non-negative number."}), 400
+            if not math.isfinite(quantity) or quantity < 0:
+                return jsonify({"error": "Quantity must be a non-negative number."}), 400
+            material.quantity = quantity
+            continue
+
+        if value is not None and not isinstance(value, str):
+            return jsonify({"error": f"{field} must be text or null."}), 400
+        setattr(material, field, value.strip() or None if isinstance(value, str) else None)
+
+    db.session.commit()
+    project_id = material.colorway.project_id
+    return jsonify({
+        "material": _material_payload(material),
+        "missing_bom_items": _missing_bom_count(project_id),
+    }), 200
 
 
 @projects_bp.route("/projects/<int:project_id>/import", methods=["POST"])
@@ -166,6 +255,7 @@ def _summary_payload(summary) -> dict:
         "project_id": summary.project_id,
         "project_fields_updated": summary.project_fields_updated,
         "file_id": summary.file_record_id,
+        "missing_bom_items": _missing_bom_count(summary.project_id),
     }
     if summary.bom:
         payload["bom"] = {
