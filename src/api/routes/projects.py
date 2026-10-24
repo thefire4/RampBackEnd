@@ -1,17 +1,13 @@
-from flask import Blueprint, jsonify
-from flask_login import login_required
-from sqlalchemy import func, or_
 import math
-
-from src.api.extensions import db
-from src.api.models import Project, ProjectColor, ProjectMaterial
 from pathlib import Path
+from typing import List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request, current_app
 from flask_login import current_user, login_required
+from sqlalchemy import func, or_
 
 from src.api.extensions import db
-from src.api.models import Project
+from src.api.models import Project, ProjectChangeLog, ProjectColor, ProjectMaterial, User
 from src.api.services.document_import import import_uploaded_document
 from src.api.services.import_errors import DocumentImportError
 
@@ -34,7 +30,7 @@ MISSING_BOM_ITEM = or_(
     ProjectMaterial.quantity.is_(None) | (ProjectMaterial.quantity <= 0),
 )
 
-EDITABLE_MATERIAL_FIELDS = {
+MATERIAL_FIELDS = (
     "name",
     "material",
     "supplier",
@@ -46,6 +42,27 @@ EDITABLE_MATERIAL_FIELDS = {
     "uom",
     "color",
     "notes",
+)
+EDITABLE_MATERIAL_FIELDS = set(MATERIAL_FIELDS)
+REQUIRED_MATERIAL_FIELDS = {
+    "material",
+    "supplier",
+    "supplier_contact",
+    "location",
+    "material_size",
+    "uom",
+    "color",
+}
+MATERIAL_FIELD_LENGTHS = {
+    "name": 50,
+    "material": 100,
+    "supplier": 100,
+    "supplier_contact": 255,
+    "location": 1000,
+    "article_no": 100,
+    "material_size": 50,
+    "uom": 10,
+    "color": 50,
 }
 
 
@@ -75,6 +92,75 @@ def _material_payload(material: ProjectMaterial) -> dict:
         "color": material.color,
         "notes": material.notes,
     }
+
+
+def _validate_material_changes(
+    changes: dict,
+) -> Tuple[Optional[dict], Optional[str]]:
+    unknown_fields = set(changes) - EDITABLE_MATERIAL_FIELDS
+    if unknown_fields:
+        return None, "One or more BOM fields cannot be edited."
+
+    normalized = {}
+    for field, value in changes.items():
+        if field == "quantity":
+            if value is None:
+                normalized[field] = None
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None, "Quantity must be a number of 0 or more."
+            quantity = float(value)
+            if not math.isfinite(quantity) or quantity < 0:
+                return None, "Quantity must be a number of 0 or more."
+            normalized[field] = quantity
+            continue
+
+        if value is not None and not isinstance(value, str):
+            return None, f"{field} must be text or null."
+        if isinstance(value, str):
+            value = value.strip()
+            if field in REQUIRED_MATERIAL_FIELDS and not value:
+                return None, f"{field.replace('_', ' ').capitalize()} cannot be blank."
+            if len(value) > MATERIAL_FIELD_LENGTHS.get(field, 1000):
+                return None, f"{field.replace('_', ' ').capitalize()} is too long."
+            normalized[field] = value or None
+        else:
+            normalized[field] = None
+
+    return normalized, None
+
+
+def _change_entries(
+    *,
+    project_id: int,
+    user_id: int,
+    action: str,
+    material_id: int,
+    values: dict,
+    old_values: Optional[dict] = None,
+) -> List[ProjectChangeLog]:
+    old_values = old_values or {}
+    return [
+        ProjectChangeLog(
+            project_id=project_id,
+            user_id=user_id,
+            action=action,
+            entity_type="material",
+            entity_id=material_id,
+            field_name=field,
+            old_value=None if old_values.get(field) is None else str(old_values[field]),
+            new_value=None if value is None else str(value),
+        )
+        for field, value in values.items()
+        if field not in old_values or old_values[field] != value
+    ]
+
+
+def _bom_line_response(material: ProjectMaterial, project_id: int):
+    return jsonify({
+        "material": _material_payload(material),
+        "missing_bom_items": _missing_bom_count(project_id),
+    })
 
 
 @projects_bp.route("/projects", methods=["GET"])
@@ -135,6 +221,7 @@ def create_project():
     return jsonify({"project": _project_payload(project)}), 201
 
 
+@projects_bp.route("/bom-lines/<int:material_id>", methods=["PATCH"])
 @projects_bp.route("/materials/<int:material_id>", methods=["PATCH"])
 @login_required
 def update_material(material_id: int):
@@ -146,35 +233,127 @@ def update_material(material_id: int):
     if not isinstance(changes, dict) or not changes:
         return jsonify({"error": "Provide at least one BOM field to update."}), 400
 
-    unknown_fields = set(changes) - EDITABLE_MATERIAL_FIELDS
-    if unknown_fields:
-        return jsonify({"error": "One or more BOM fields cannot be edited."}), 400
+    normalized, error = _validate_material_changes(changes)
+    if error:
+        return jsonify({"error": error}), 400
 
-    for field, value in changes.items():
-        if field == "quantity":
-            if value is None:
-                material.quantity = None
-                continue
-            if isinstance(value, bool):
-                return jsonify({"error": "Quantity must be a non-negative number."}), 400
-            try:
-                quantity = float(value)
-            except (TypeError, ValueError):
-                return jsonify({"error": "Quantity must be a non-negative number."}), 400
-            if not math.isfinite(quantity) or quantity < 0:
-                return jsonify({"error": "Quantity must be a non-negative number."}), 400
-            material.quantity = quantity
-            continue
-
-        if value is not None and not isinstance(value, str):
-            return jsonify({"error": f"{field} must be text or null."}), 400
-        setattr(material, field, value.strip() or None if isinstance(value, str) else None)
+    old_values = {field: getattr(material, field) for field in normalized}
+    project_id = material.colorway.project_id
+    for field, value in normalized.items():
+        setattr(material, field, value)
+    db.session.add_all(_change_entries(
+        project_id=project_id,
+        user_id=current_user.id,
+        action="updated",
+        material_id=material.id,
+        values=normalized,
+        old_values=old_values,
+    ))
 
     db.session.commit()
+    return _bom_line_response(material, project_id), 200
+
+
+@projects_bp.route("/projects/<int:project_id>/bom-lines", methods=["POST"])
+@login_required
+def create_bom_line(project_id: int):
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return jsonify({"error": "Project not found."}), 404
+
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "A JSON object is required."}), 400
+    if "colorway_id" not in body:
+        return jsonify({"error": "A colorway_id is required."}), 400
+
+    colorway_id = body.pop("colorway_id")
+    if isinstance(colorway_id, bool) or not isinstance(colorway_id, int):
+        return jsonify({"error": "colorway_id must be an integer."}), 400
+    colorway = ProjectColor.query.filter_by(
+        id=colorway_id,
+        project_id=project_id,
+    ).first()
+    if colorway is None:
+        return jsonify({"error": "Colorway not found for this project."}), 404
+
+    if "quantity" not in body:
+        body["quantity"] = None
+    normalized, error = _validate_material_changes(body)
+    if error:
+        return jsonify({"error": error}), 400
+
+    material = ProjectMaterial(colorway=colorway, **normalized)
+    db.session.add(material)
+    db.session.flush()
+    db.session.add_all(_change_entries(
+        project_id=project_id,
+        user_id=current_user.id,
+        action="created",
+        material_id=material.id,
+        values={field: getattr(material, field) for field in MATERIAL_FIELDS},
+    ))
+    db.session.commit()
+    return _bom_line_response(material, project_id), 201
+
+
+@projects_bp.route("/bom-lines/<int:material_id>", methods=["DELETE"])
+@login_required
+def delete_bom_line(material_id: int):
+    material = db.session.get(ProjectMaterial, material_id)
+    if material is None:
+        return jsonify({"error": "BOM line not found."}), 404
+
     project_id = material.colorway.project_id
+    old_values = {field: getattr(material, field) for field in MATERIAL_FIELDS}
+    db.session.add_all(_change_entries(
+        project_id=project_id,
+        user_id=current_user.id,
+        action="deleted",
+        material_id=material.id,
+        values={field: None for field in MATERIAL_FIELDS},
+        old_values=old_values,
+    ))
+    db.session.delete(material)
+    db.session.commit()
     return jsonify({
-        "material": _material_payload(material),
+        "deleted": True,
+        "id": material_id,
         "missing_bom_items": _missing_bom_count(project_id),
+    }), 200
+
+
+@projects_bp.route("/projects/<int:project_id>/history", methods=["GET"])
+@login_required
+def project_history(project_id: int):
+    if db.session.get(Project, project_id) is None:
+        return jsonify({"error": "Project not found."}), 404
+
+    entries = (
+        db.session.query(ProjectChangeLog, User.username)
+        .outerjoin(User, ProjectChangeLog.user_id == User.id)
+        .filter(ProjectChangeLog.project_id == project_id)
+        .order_by(ProjectChangeLog.changed_at.desc(), ProjectChangeLog.id.desc())
+        .limit(500)
+        .all()
+    )
+    return jsonify({
+        "history": [
+            {
+                "id": entry.id,
+                "project_id": entry.project_id,
+                "user_id": entry.user_id,
+                "username": username,
+                "action": entry.action,
+                "entity_type": entry.entity_type,
+                "entity_id": entry.entity_id,
+                "field_name": entry.field_name,
+                "old_value": entry.old_value,
+                "new_value": entry.new_value,
+                "changed_at": entry.changed_at.isoformat() if entry.changed_at else None,
+            }
+            for entry, username in entries
+        ]
     }), 200
 
 

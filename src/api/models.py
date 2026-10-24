@@ -82,7 +82,7 @@ class ProjectMaterial(db.Model):
     material = db.Column(db.String(100))
     supplier = db.Column(db.String(100))
     supplier_contact = db.Column(db.String(255))
-    quantity = db.Column(db.Integer)
+    quantity = db.Column(db.Float)
     location = db.Column(db.String(1000))
     article_no = db.Column(db.String(100))
     material_size = db.Column(db.String(50))
@@ -94,6 +94,23 @@ class ProjectMaterial(db.Model):
     import_field_sources = db.Column(db.Text)
 
     colorway = db.relationship("ProjectColor", back_populates="materials")
+
+
+class ProjectChangeLog(db.Model):
+    __tablename__ = "project_change_log"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    action = db.Column(db.String(50), nullable=False)
+    entity_type = db.Column(db.String(50), nullable=False)
+    entity_id = db.Column(db.Integer)
+    field_name = db.Column(db.String(100))
+    old_value = db.Column(db.Text)
+    new_value = db.Column(db.Text)
+    changed_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
+
+    user = db.relationship("User")
 
 
 class PointsMeasured(db.Model):

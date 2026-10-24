@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS project_materials (
     material VARCHAR(100),
     supplier VARCHAR(100),
     supplier_contact VARCHAR(255),
-    quantity INT,
+    quantity DOUBLE,
     location VARCHAR(1000),
     article_no VARCHAR(100),
     material_size VARCHAR(50),
@@ -143,8 +143,8 @@ CREATE TABLE IF NOT EXISTS comments (
         ON DELETE SET NULL
 );
 
--- Project chanage log
-CREATE TABLE project_log (
+-- Project change log
+CREATE TABLE IF NOT EXISTS project_change_log (
     id INT AUTO_INCREMENT PRIMARY KEY,
     project_id INT NOT NULL,
     user_id INT NULL, 
@@ -152,13 +152,13 @@ CREATE TABLE project_log (
     entity_type VARCHAR(50) NOT NULL,
     entity_id INT,
     field_name VARCHAR(100),
-    old_value VARCHAR(1000),
-    new_value VARCHAR(1000), 
+    old_value TEXT,
+    new_value TEXT,
     changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id)
-        REFERENCES users(id)
-	ON DELETE CASCADE,
+        REFERENCES projects(id)
+        ON DELETE CASCADE,
     FOREIGN KEY (user_id)
-	REFERENCES users(id)
-	ON DELETE SET NULL, 
+        REFERENCES users(id)
+        ON DELETE SET NULL
 );
