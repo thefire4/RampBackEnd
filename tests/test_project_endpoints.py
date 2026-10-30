@@ -1,9 +1,10 @@
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 
 import pytest
 
 from src.api.extensions import db
-from src.api.models import Project, ProjectColor, ProjectMaterial, User
+from src.api.models import Project, ProjectColor, ProjectFile, ProjectMaterial, User
 
 
 @pytest.fixture
@@ -234,3 +235,131 @@ def test_patch_bom_line_recalculates_completeness(client, app):
         assert payload["total_bom_lines"] == 1
         assert payload["missing_bom_items"] == 0
         assert payload["percent_complete"] == 100
+
+
+def test_get_project_images_lists_only_images_with_metadata(client, app, tmp_path):
+    with app.app_context():
+        project = Project(name="Image listing")
+        db.session.add(project)
+        db.session.flush()
+        user = User.query.first()
+        image = ProjectFile(
+            project_id=project.id,
+            user_id=user.id,
+            file_name="front.jpg",
+            file_path=str(tmp_path / "front.jpg"),
+            file_type="jpg",
+            created_at=datetime(2026, 10, 30, 12, 0),
+        )
+        document = ProjectFile(
+            project_id=project.id,
+            user_id=user.id,
+            file_name="spec.pdf",
+            file_path=str(tmp_path / "spec.pdf"),
+            file_type="pdf",
+        )
+        db.session.add_all([image, document])
+        db.session.commit()
+        project_id = project.id
+        image_id = image.id
+
+        response = client.get(f"/api/projects/{project_id}/images")
+
+        assert response.status_code == 200
+        images = response.get_json()["images"]
+        assert images == [{
+            "id": image_id,
+            "file_name": "front.jpg",
+            "file_type": "image/jpeg",
+            "uploaded_at": "2026-10-30T12:00:00",
+            "url": f"/api/projects/{project_id}/images/{image_id}",
+        }]
+
+
+def test_get_project_image_serves_full_size_image(client, app, tmp_path):
+    image_bytes = b"\xff\xd8full-size-image-content\xff\xd9"
+    image_path = tmp_path / "sketch.jpg"
+    image_path.write_bytes(image_bytes)
+
+    with app.app_context():
+        project = Project(name="Image serving")
+        db.session.add(project)
+        db.session.flush()
+        image = ProjectFile(
+            project_id=project.id,
+            user_id=User.query.first().id,
+            file_name="sketch.jpg",
+            file_path=str(image_path),
+            file_type="image/jpeg",
+        )
+        db.session.add(image)
+        db.session.commit()
+        project_id = project.id
+        image_id = image.id
+
+    response = client.get(f"/api/projects/{project_id}/images/{image_id}")
+
+    assert response.status_code == 200
+    assert response.mimetype == "image/jpeg"
+    assert response.data == image_bytes
+
+
+def test_get_project_image_returns_clear_error_when_missing(client, app, tmp_path):
+    with app.app_context():
+        project = Project(name="Missing image")
+        db.session.add(project)
+        db.session.flush()
+        image = ProjectFile(
+            project_id=project.id,
+            user_id=User.query.first().id,
+            file_name="missing.png",
+            file_path=str(tmp_path / "missing.png"),
+            file_type="png",
+        )
+        db.session.add(image)
+        db.session.commit()
+        project_id = project.id
+        image_id = image.id
+
+    response = client.get(f"/api/projects/{project_id}/images/{image_id}")
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Image file is missing."}
+
+
+def test_get_project_image_returns_clear_error_when_file_cannot_be_opened(
+    client,
+    app,
+    tmp_path,
+    monkeypatch,
+):
+    image_path = tmp_path / "unreadable.png"
+    image_path.write_bytes(b"image")
+    original_open = Path.open
+
+    def fail_open(path, *args, **kwargs):
+        if path == image_path:
+            raise PermissionError("access denied")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_open)
+    with app.app_context():
+        project = Project(name="Unreadable image")
+        db.session.add(project)
+        db.session.flush()
+        image = ProjectFile(
+            project_id=project.id,
+            user_id=User.query.first().id,
+            file_name="unreadable.png",
+            file_path=str(image_path),
+            file_type="png",
+        )
+        db.session.add(image)
+        db.session.commit()
+        project_id = project.id
+        image_id = image.id
+
+    response = client.get(f"/api/projects/{project_id}/images/{image_id}")
+
+    assert response.status_code == 500
+    assert response.get_json() == {"error": "Image file could not be opened."}

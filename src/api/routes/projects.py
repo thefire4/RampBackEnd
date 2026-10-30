@@ -1,4 +1,5 @@
 import math
+import mimetypes
 from datetime import date
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -86,6 +87,16 @@ PROJECT_FIELDS = {
     "description": 1000,
 }
 PROJECT_STATUSES = {"blocked", "in progress", "finished"}
+IMAGE_EXTENSIONS = {
+    ".avif",
+    ".bmp",
+    ".gif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+    ".svg",
+    ".webp",
+}
 
 
 def _missing_bom_count(project_id: int) -> int:
@@ -200,6 +211,50 @@ def _material_payload(material: ProjectMaterial) -> dict:
         "color": material.color,
         "notes": material.notes,
     }
+
+
+def _image_mimetype(project_file: ProjectFile) -> Optional[str]:
+    file_type = (project_file.file_type or "").strip().lower()
+    if file_type.startswith("image/"):
+        return file_type
+
+    extension = Path(project_file.file_name).suffix.lower()
+    if extension not in IMAGE_EXTENSIONS:
+        extension = f".{file_type.lstrip('.')}"
+    if extension not in IMAGE_EXTENSIONS:
+        return None
+    return mimetypes.guess_type(f"image{extension}")[0]
+
+
+def _serve_project_file(
+    project_file: ProjectFile,
+    mimetype: Optional[str] = None,
+    file_label: str = "Project file",
+):
+    if not project_file.file_path:
+        return jsonify({"error": f"{file_label} is missing."}), 404
+
+    path = Path(project_file.file_path)
+    if not path.is_file():
+        return jsonify({"error": f"{file_label} is missing."}), 404
+
+    try:
+        with path.open("rb") as image_file:
+            image_file.read(1)
+    except OSError:
+        current_app.logger.exception("Could not open %s %s", file_label.lower(), path)
+        return jsonify({"error": f"{file_label} could not be opened."}), 500
+
+    try:
+        return send_file(
+            path,
+            mimetype=mimetype,
+            as_attachment=False,
+            download_name=project_file.file_name,
+        )
+    except OSError:
+        current_app.logger.exception("Could not serve %s %s", file_label.lower(), path)
+        return jsonify({"error": f"{file_label} could not be opened."}), 500
 
 
 def _validate_material_changes(
@@ -350,11 +405,63 @@ def get_project(project_id: int):
                     "projects.get_project_file",
                     file_id=file.id,
                 ),
-                "created_at": None,
+                "created_at": file.created_at.isoformat() if file.created_at else None,
             }
             for file in project.files
         ],
     }), 200
+
+
+@projects_bp.route("/projects/<int:project_id>/images", methods=["GET"])
+@login_required
+def get_project_images(project_id: int):
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return jsonify({"error": "Project not found."}), 404
+
+    images = (
+        ProjectFile.query
+        .filter_by(project_id=project_id)
+        .order_by(ProjectFile.created_at.desc(), ProjectFile.id.desc())
+        .all()
+    )
+    image_payloads = []
+    for image in images:
+        mimetype = _image_mimetype(image)
+        if mimetype is None:
+            continue
+        image_payloads.append({
+            "id": image.id,
+            "file_name": image.file_name,
+            "file_type": mimetype,
+            "uploaded_at": image.created_at.isoformat() if image.created_at else None,
+            "url": url_for(
+                "projects.get_project_image",
+                project_id=project_id,
+                file_id=image.id,
+            ),
+        })
+
+    return jsonify({"images": image_payloads}), 200
+
+
+@projects_bp.route(
+    "/projects/<int:project_id>/images/<int:file_id>",
+    methods=["GET"],
+)
+@login_required
+def get_project_image(project_id: int, file_id: int):
+    image = ProjectFile.query.filter_by(
+        id=file_id,
+        project_id=project_id,
+    ).first()
+    if image is None:
+        return jsonify({"error": "Project image not found."}), 404
+
+    mimetype = _image_mimetype(image)
+    if mimetype is None:
+        return jsonify({"error": "Project file is not an image."}), 404
+    return _serve_project_file(image, mimetype, file_label="Image file")
 
 
 @projects_bp.route("/projects/<int:project_id>", methods=["PATCH"])
@@ -391,14 +498,13 @@ def update_project(project_id: int):
 @login_required
 def get_project_file(file_id: int):
     project_file = db.session.get(ProjectFile, file_id)
-    if project_file is None or not project_file.file_path:
+    if project_file is None:
         return jsonify({"error": "Project file not found."}), 404
 
-    path = Path(project_file.file_path)
-    if not path.is_file():
-        return jsonify({"error": "Project file not found."}), 404
-
-    return send_file(path, as_attachment=False, download_name=project_file.file_name)
+    return _serve_project_file(
+        project_file,
+        mimetypes.guess_type(project_file.file_name)[0],
+    )
 
 
 @projects_bp.route("/projects", methods=["POST"])

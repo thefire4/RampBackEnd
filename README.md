@@ -11,6 +11,10 @@ Server uses cors and CSRF tokens for security and cookies
 - `GET /api/projects/<project_id>` returns one project's overview, colorways,
   BOM lines, files, and the same completeness counts. Projects with no BOM
   lines report `0` percent complete.
+- `GET /api/projects/<project_id>/images` lists that project's images with
+  their file name, MIME type, upload date, and image URL.
+- `GET /api/projects/<project_id>/images/<file_id>` serves the full-size image.
+  Missing files return `404`; files that cannot be opened return `500`.
 - `PATCH /api/bom-lines/<line_id>` updates one or more editable BOM fields.
 - `PATCH /api/projects/<project_id>` updates project details. It accepts
   `name`, `stage` (or `status`), `style_no`, `po_no`, `project_date`, `customer`,
