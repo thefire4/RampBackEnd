@@ -5,7 +5,21 @@ Server uses cors and CSRF tokens for security and cookies
 
 ## BOM line API
 
+- `GET /api/projects` lists all projects with their style, description, stage,
+  PO number, project date, total and missing BOM line counts, and integer
+  completion percentage.
+- `GET /api/projects/<project_id>` returns one project's overview, colorways,
+  BOM lines, files, and the same completeness counts. Projects with no BOM
+  lines report `0` percent complete.
+- `GET /api/projects/<project_id>/images` lists that project's images with
+  their file name, MIME type, upload date, and image URL.
+- `GET /api/projects/<project_id>/images/<file_id>` serves the full-size image.
+  Missing files return `404`; files that cannot be opened return `500`.
 - `PATCH /api/bom-lines/<line_id>` updates one or more editable BOM fields.
+- `PATCH /api/projects/<project_id>` updates project details. It accepts
+  `name`, `stage` (or `status`), `style_no`, `po_no`, `project_date`, `customer`,
+  `size_range`, `season`, `fabric_yarn`, `designer`, `weight`, and
+  `description`; dates use `YYYY-MM-DD`.
 - `POST /api/projects/<project_id>/bom-lines` creates a line; include the project's
   `colorway_id` and any BOM fields in the JSON body.
 - `DELETE /api/bom-lines/<line_id>` deletes a line.
