@@ -2,12 +2,19 @@ import math
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from flask import Blueprint, jsonify, request, current_app
+from flask import Blueprint, jsonify, request, current_app, send_file, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 
 from src.api.extensions import db
-from src.api.models import Project, ProjectChangeLog, ProjectColor, ProjectMaterial, User
+from src.api.models import (
+    Project,
+    ProjectChangeLog,
+    ProjectColor,
+    ProjectFile,
+    ProjectMaterial,
+    User,
+)
 from src.api.services.document_import import import_uploaded_document
 from src.api.services.import_errors import DocumentImportError
 
@@ -74,6 +81,31 @@ def _missing_bom_count(project_id: int) -> int:
         .scalar()
     )
     return int(count or 0)
+
+
+def _bom_counts_query():
+    return (
+        db.session.query(
+            ProjectColor.project_id.label("project_id"),
+            func.count(ProjectMaterial.id).label("total"),
+            func.sum(case((MISSING_BOM_ITEM, 1), else_=0)).label("missing"),
+        )
+        .join(ProjectMaterial, ProjectMaterial.colorway_id == ProjectColor.id)
+        .group_by(ProjectColor.project_id)
+        .subquery()
+    )
+
+
+def _completeness(total: int, missing: int) -> dict:
+    return {
+        "total_bom_lines": total,
+        "missing_bom_items": missing,
+        "percent_complete": (
+            round((total - missing) / total * 100)
+            if total
+            else 0
+        ),
+    }
 
 
 def _material_payload(material: ProjectMaterial) -> dict:
@@ -166,24 +198,15 @@ def _bom_line_response(material: ProjectMaterial, project_id: int):
 @projects_bp.route("/projects", methods=["GET"])
 @login_required
 def get_projects():
-    # Missing-item count per project, computed in one query instead of per row
-    missing_counts = (
-        db.session.query(
-            ProjectColor.project_id.label("project_id"),
-            func.count(ProjectMaterial.id).label("missing")
-        )
-        .join(ProjectMaterial, ProjectMaterial.colorway_id == ProjectColor.id)
-        .filter(MISSING_BOM_ITEM)
-        .group_by(ProjectColor.project_id)
-        .subquery()
-    )
+    bom_counts = _bom_counts_query()
 
     rows = (
         db.session.query(
             Project,
-            func.coalesce(missing_counts.c.missing, 0)
+            func.coalesce(bom_counts.c.total, 0),
+            func.coalesce(bom_counts.c.missing, 0),
         )
-        .outerjoin(missing_counts, missing_counts.c.project_id == Project.id)
+        .outerjoin(bom_counts, bom_counts.c.project_id == Project.id)
         .order_by(Project.created_at.desc(), Project.id.desc())
         .all()
     )
@@ -195,18 +218,91 @@ def get_projects():
                 "name": project.name,
                 "customer": project.customer,
                 "style_no": project.style_no,
+                "description": project.description,
                 "style_description": project.description,
                 "stage": project.status,
                 "po_no": project.po_no,
+                "project_date": (
+                    project.project_date.isoformat()
+                    if project.project_date else None
+                ),
                 "created_at": (
                     project.created_at.isoformat()
                     if project.created_at else None
                 ),
-                "missing_bom_items": int(missing),
+                **_completeness(int(total), int(missing)),
             }
-            for project, missing in rows
+            for project, total, missing in rows
         ]
     }), 200
+
+
+@projects_bp.route("/projects/<int:project_id>", methods=["GET"])
+@login_required
+def get_project(project_id: int):
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return jsonify({"error": "Project not found."}), 404
+
+    counts = (
+        db.session.query(
+            func.count(ProjectMaterial.id),
+            func.coalesce(func.sum(case((MISSING_BOM_ITEM, 1), else_=0)), 0),
+        )
+        .join(ProjectColor, ProjectMaterial.colorway_id == ProjectColor.id)
+        .filter(ProjectColor.project_id == project_id)
+        .one()
+    )
+    total, missing = (int(value) for value in counts)
+    project_payload = {
+        **_project_payload(project),
+        "stage": project.status,
+        "created_at": project.created_at.isoformat() if project.created_at else None,
+        **_completeness(total, missing),
+    }
+    return jsonify({
+        "project": project_payload,
+        "colorways": [
+            {
+                "id": colorway.id,
+                "name": colorway.name,
+                "materials": [
+                    _material_payload(material)
+                    for material in colorway.materials
+                ],
+            }
+            for colorway in project.colorways
+        ],
+        "files": [
+            {
+                "id": file.id,
+                "file_name": file.file_name,
+                "file_type": file.file_type,
+                "url": url_for(
+                    "projects.get_project_file",
+                    file_id=file.id,
+                ),
+                "created_at": None,
+            }
+            for file in project.files
+        ],
+    }), 200
+
+
+@projects_bp.route("/files/<int:file_id>", methods=["GET"])
+@login_required
+def get_project_file(file_id: int):
+    project_file = db.session.get(ProjectFile, file_id)
+    if project_file is None or not project_file.file_path:
+        return jsonify({"error": "Project file not found."}), 404
+
+    path = Path(project_file.file_path)
+    if not path.is_file():
+        return jsonify({"error": "Project file not found."}), 404
+
+    return send_file(path, as_attachment=False, download_name=project_file.file_name)
+
+
 @projects_bp.route("/projects", methods=["POST"])
 @login_required
 def create_project():
