@@ -5,6 +5,12 @@ Server uses cors and CSRF tokens for security and cookies
 
 ## BOM line API
 
+- `GET /api/projects` lists all projects with their style, description, stage,
+  PO number, project date, total and missing BOM line counts, and integer
+  completion percentage.
+- `GET /api/projects/<project_id>` returns one project's overview, colorways,
+  BOM lines, files, and the same completeness counts. Projects with no BOM
+  lines report `0` percent complete.
 - `PATCH /api/bom-lines/<line_id>` updates one or more editable BOM fields.
 - `POST /api/projects/<project_id>/bom-lines` creates a line; include the project's
   `colorway_id` and any BOM fields in the JSON body.
