@@ -150,3 +150,87 @@ def test_get_project_returns_not_found_for_unknown_project(client):
 
     assert response.status_code == 404
     assert response.get_json() == {"error": "Project not found."}
+
+
+def test_patch_project_updates_details_and_returns_current_completeness(client, app):
+    with app.app_context():
+        project = Project(name="Old name")
+        colorway = ProjectColor(name="Black", project=project)
+        colorway.materials.append(
+            ProjectMaterial(**_complete_material(supplier=""))
+        )
+        db.session.add(project)
+        db.session.commit()
+        project_id = project.id
+
+        response = client.patch(
+            f"/api/projects/{project_id}",
+            json={
+                "name": "Updated name",
+                "stage": "finished",
+                "style_no": "ST-200",
+                "project_date": "2026-10-30",
+                "description": "Hand-updated project",
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.get_json()["project"]
+        assert payload["name"] == "Updated name"
+        assert payload["stage"] == "finished"
+        assert payload["style_no"] == "ST-200"
+        assert payload["project_date"] == "2026-10-30"
+        assert payload["description"] == "Hand-updated project"
+        assert payload["total_bom_lines"] == 1
+        assert payload["missing_bom_items"] == 1
+        assert payload["percent_complete"] == 0
+        assert db.session.get(Project, project_id).name == "Updated name"
+
+
+def test_patch_project_rejects_invalid_updates_without_saving(client, app):
+    with app.app_context():
+        project = Project(name="Original", status="in progress")
+        db.session.add(project)
+        db.session.commit()
+        project_id = project.id
+
+        for invalid_update in (
+            {"name": "   "},
+            {"status": "planning"},
+            {"project_date": "10/30/2026"},
+            {"name": 42},
+            {"unknown": "value"},
+        ):
+            response = client.patch(
+                f"/api/projects/{project_id}",
+                json=invalid_update,
+            )
+            assert response.status_code == 400
+            db.session.refresh(project)
+            assert project.name == "Original"
+            assert project.status == "in progress"
+
+
+def test_patch_bom_line_recalculates_completeness(client, app):
+    with app.app_context():
+        project = Project(name="BOM edit")
+        colorway = ProjectColor(name="Black", project=project)
+        material = ProjectMaterial(
+            colorway=colorway,
+            **_complete_material(supplier=""),
+        )
+        db.session.add(project)
+        db.session.add(material)
+        db.session.commit()
+
+        response = client.patch(
+            f"/api/bom-lines/{material.id}",
+            json={"supplier": "New Mill"},
+        )
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload["material"]["supplier"] == "New Mill"
+        assert payload["total_bom_lines"] == 1
+        assert payload["missing_bom_items"] == 0
+        assert payload["percent_complete"] == 100

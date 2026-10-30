@@ -12,6 +12,10 @@ Server uses cors and CSRF tokens for security and cookies
   BOM lines, files, and the same completeness counts. Projects with no BOM
   lines report `0` percent complete.
 - `PATCH /api/bom-lines/<line_id>` updates one or more editable BOM fields.
+- `PATCH /api/projects/<project_id>` updates project details. It accepts
+  `name`, `stage` (or `status`), `style_no`, `po_no`, `project_date`, `customer`,
+  `size_range`, `season`, `fabric_yarn`, `designer`, `weight`, and
+  `description`; dates use `YYYY-MM-DD`.
 - `POST /api/projects/<project_id>/bom-lines` creates a line; include the project's
   `colorway_id` and any BOM fields in the JSON body.
 - `DELETE /api/bom-lines/<line_id>` deletes a line.

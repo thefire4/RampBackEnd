@@ -1,4 +1,5 @@
 import math
+from datetime import date
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -71,6 +72,20 @@ MATERIAL_FIELD_LENGTHS = {
     "uom": 10,
     "color": 50,
 }
+PROJECT_FIELDS = {
+    "name": 100,
+    "status": 20,
+    "style_no": 100,
+    "po_no": 100,
+    "customer": 255,
+    "size_range": 50,
+    "season": 50,
+    "fabric_yarn": 100,
+    "designer": 100,
+    "weight": 100,
+    "description": 1000,
+}
+PROJECT_STATUSES = {"blocked", "in progress", "finished"}
 
 
 def _missing_bom_count(project_id: int) -> int:
@@ -81,6 +96,19 @@ def _missing_bom_count(project_id: int) -> int:
         .scalar()
     )
     return int(count or 0)
+
+
+def _project_bom_counts(project_id: int) -> tuple[int, int]:
+    total, missing = (
+        db.session.query(
+            func.count(ProjectMaterial.id),
+            func.coalesce(func.sum(case((MISSING_BOM_ITEM, 1), else_=0)), 0),
+        )
+        .join(ProjectColor, ProjectMaterial.colorway_id == ProjectColor.id)
+        .filter(ProjectColor.project_id == project_id)
+        .one()
+    )
+    return int(total), int(missing)
 
 
 def _bom_counts_query():
@@ -106,6 +134,54 @@ def _completeness(total: int, missing: int) -> dict:
             else 0
         ),
     }
+
+
+def _validate_project_changes(changes: dict) -> Tuple[Optional[dict], Optional[str]]:
+    changes = dict(changes)
+    if "stage" in changes:
+        if "status" in changes:
+            return None, "Provide either stage or status, not both."
+        changes["status"] = changes.pop("stage")
+
+    unknown_fields = set(changes) - (set(PROJECT_FIELDS) | {"project_date"})
+    if unknown_fields:
+        return None, "One or more project fields cannot be edited."
+
+    normalized = {}
+    for field, value in changes.items():
+        if field == "project_date":
+            if value is None or value == "":
+                normalized[field] = None
+                continue
+            if not isinstance(value, str):
+                return None, "Project date must be a date in YYYY-MM-DD format or null."
+            try:
+                parsed_date = date.fromisoformat(value)
+            except ValueError:
+                return None, "Project date must be a date in YYYY-MM-DD format or null."
+            if parsed_date.isoformat() != value:
+                return None, "Project date must be a date in YYYY-MM-DD format or null."
+            normalized[field] = parsed_date
+            continue
+
+        if value is not None and not isinstance(value, str):
+            return None, f"{field.replace('_', ' ').capitalize()} must be text or null."
+        if value is None:
+            if field in {"name", "status"}:
+                return None, f"{field.capitalize()} cannot be blank."
+            normalized[field] = None
+            continue
+
+        value = value.strip()
+        if field in {"name", "status"} and not value:
+            return None, f"{field.capitalize()} cannot be blank."
+        if len(value) > PROJECT_FIELDS[field]:
+            return None, f"{field.replace('_', ' ').capitalize()} is too long."
+        if field == "status" and value not in PROJECT_STATUSES:
+            return None, "Stage must be blocked, in progress, or finished."
+        normalized[field] = value or None
+
+    return normalized, None
 
 
 def _material_payload(material: ProjectMaterial) -> dict:
@@ -189,9 +265,10 @@ def _change_entries(
 
 
 def _bom_line_response(material: ProjectMaterial, project_id: int):
+    total, missing = _project_bom_counts(project_id)
     return jsonify({
         "material": _material_payload(material),
-        "missing_bom_items": _missing_bom_count(project_id),
+        **_completeness(total, missing),
     })
 
 
@@ -244,16 +321,7 @@ def get_project(project_id: int):
     if project is None:
         return jsonify({"error": "Project not found."}), 404
 
-    counts = (
-        db.session.query(
-            func.count(ProjectMaterial.id),
-            func.coalesce(func.sum(case((MISSING_BOM_ITEM, 1), else_=0)), 0),
-        )
-        .join(ProjectColor, ProjectMaterial.colorway_id == ProjectColor.id)
-        .filter(ProjectColor.project_id == project_id)
-        .one()
-    )
-    total, missing = (int(value) for value in counts)
+    total, missing = _project_bom_counts(project_id)
     project_payload = {
         **_project_payload(project),
         "stage": project.status,
@@ -286,6 +354,36 @@ def get_project(project_id: int):
             }
             for file in project.files
         ],
+    }), 200
+
+
+@projects_bp.route("/projects/<int:project_id>", methods=["PATCH"])
+@login_required
+def update_project(project_id: int):
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return jsonify({"error": "Project not found."}), 404
+
+    changes = request.get_json(silent=True)
+    if not isinstance(changes, dict) or not changes:
+        return jsonify({"error": "Provide at least one project field to update."}), 400
+
+    normalized, error = _validate_project_changes(changes)
+    if error:
+        return jsonify({"error": error}), 400
+
+    for field, value in normalized.items():
+        setattr(project, field, value)
+    db.session.commit()
+
+    total, missing = _project_bom_counts(project_id)
+    return jsonify({
+        "project": {
+            **_project_payload(project),
+            "stage": project.status,
+            "created_at": project.created_at.isoformat() if project.created_at else None,
+            **_completeness(total, missing),
+        }
     }), 200
 
 
