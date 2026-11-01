@@ -9,7 +9,8 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
 from src.api.extensions import db
-from src.api.models import Project, ProjectFile
+from src.api.models import Project, ProjectFile, ProjectMaterial, PointsMeasured
+from src.api.services.provenance import record_source, MATERIAL_FIELDS, MEASUREMENT_FIELDS
 from src.api.services.bom_import import BomImportResult, import_bom_from_file
 from src.api.services.import_errors import DocumentImportError
 from src.api.services.measurements_import import (
@@ -99,6 +100,8 @@ def _import_saved_file(
     import_project_details: bool,
 ) -> DocumentImportSummary:
     file_name = original_filename
+    old_materials = {m.id for c in project.colorways for m in c.materials}
+    old_points = {p.id for p in project.measurement_points}
     summary = DocumentImportSummary(project_id=project.id)
 
     if import_project_details and path.suffix.lower() in {
@@ -128,10 +131,28 @@ def _import_saved_file(
         project=project,
         user_id=user_id,
         file_name=file_name,
-        file_path=str(path),
+        file_path=str(path.resolve()),
         file_type=path.suffix.lower().lstrip("."),
     )
     db.session.add(file_record)
+    db.session.flush()
+    for field in summary.project_fields_updated:
+        record_source(project.id, "project", project.id, field, kind="file", file=file_record)
+    for colorway in project.colorways:
+        for material in colorway.materials:
+            if material.id in old_materials:
+                continue
+            for field in MATERIAL_FIELDS:
+                if getattr(material, field) is not None:
+                    record_source(project.id, "material", material.id, field, kind="file", file=file_record,
+                                  sheet=summary.bom.sheet_name, row=material.import_source_row)
+    for point in PointsMeasured.query.filter_by(project_id=project.id).all():
+        if point.id in old_points:
+            continue
+        for field in MEASUREMENT_FIELDS:
+            if getattr(point, field) is not None:
+                record_source(project.id, "measurement", point.id, field, kind="file", file=file_record,
+                              sheet=summary.measurements.sheet_name, row=getattr(point, "_source_row", None))
     db.session.commit()
     summary.file_record_id = file_record.id
     return summary
