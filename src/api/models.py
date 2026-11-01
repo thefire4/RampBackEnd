@@ -18,6 +18,7 @@ class User(UserMixin, db.Model):
         return self.role == "admin"
 
 
+# Project tables are defined in SQL_Setup.sql; these models map onto them.
 class Project(db.Model):
     __tablename__ = "projects"
 
@@ -34,6 +35,7 @@ class Project(db.Model):
     designer = db.Column(db.String(100))
     weight = db.Column(db.String(100))
     description = db.Column(db.String(1000))
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
 
     colorways = db.relationship(
         "ProjectColor",
@@ -73,14 +75,14 @@ class ProjectMaterial(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     colorway_id = db.Column(
         db.Integer,
-        db.ForeignKey("project_colors.id"),
-        nullable=False,
+        db.ForeignKey("project_colors.id", ondelete="CASCADE"),
+        nullable=False
     )
     name = db.Column(db.String(50))
     material = db.Column(db.String(100))
     supplier = db.Column(db.String(100))
     supplier_contact = db.Column(db.String(255))
-    quantity = db.Column(db.Integer)
+    quantity = db.Column(db.Float)
     location = db.Column(db.String(1000))
     article_no = db.Column(db.String(100))
     material_size = db.Column(db.String(50))
@@ -92,6 +94,23 @@ class ProjectMaterial(db.Model):
     import_field_sources = db.Column(db.Text)
 
     colorway = db.relationship("ProjectColor", back_populates="materials")
+
+
+class ProjectChangeLog(db.Model):
+    __tablename__ = "project_change_log"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    action = db.Column(db.String(50), nullable=False)
+    entity_type = db.Column(db.String(50), nullable=False)
+    entity_id = db.Column(db.Integer)
+    field_name = db.Column(db.String(100))
+    old_value = db.Column(db.Text)
+    new_value = db.Column(db.Text)
+    changed_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
+
+    user = db.relationship("User")
 
 
 class PointsMeasured(db.Model):

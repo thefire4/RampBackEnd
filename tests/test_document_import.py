@@ -5,7 +5,15 @@ from pathlib import Path
 import pytest
 
 from src.api.extensions import db
-from src.api.models import PointsMeasured, Project, ProjectMaterial, User
+from src.api.models import (
+    PointsMeasured,
+    Project,
+    ProjectChangeLog,
+    ProjectColor,
+    ProjectMaterial,
+    User,
+)
+from src.api.routes.projects import MATERIAL_FIELDS, MISSING_BOM_ITEM, _summary_payload
 from src.api.services.document_import import import_document_path
 from src.api.services.import_errors import DocumentImportError
 from src.api.services.tech_pack_import import apply_project_details, extract_project_details_from_file
@@ -55,6 +63,13 @@ def test_duckworth_bom_import(app):
         assert snap.supplier_contact == "DUCKWORTH"
         assert snap.import_source_file == DUCKWORTH_BOM.name
         assert snap.import_source_row == 14
+        expected_missing = (
+            db.session.query(ProjectMaterial.id)
+            .join(ProjectColor)
+            .filter(ProjectColor.project_id == project.id, MISSING_BOM_ITEM)
+            .count()
+        )
+        assert _summary_payload(summary)["missing_bom_items"] == expected_missing
 
 
 def test_duckworth_project_details_and_measurements(app):
@@ -79,6 +94,201 @@ def test_duckworth_project_details_and_measurements(app):
         assert summary.measurements.sheet_name == "SPEC"
         assert summary.measurements.points_created == 205
         assert PointsMeasured.query.count() == 205
+
+
+def test_project_missing_bom_count_checks_required_material_fields(app):
+    with app.app_context():
+        project = Project(name="BOM completeness")
+        db.session.add(project)
+        db.session.flush()
+        colorway = ProjectColor(name="Black", project_id=project.id)
+        db.session.add(colorway)
+        db.session.flush()
+
+        complete_fields = {
+            "material": "100% cotton",
+            "supplier": "Mill",
+            "supplier_contact": "Contact",
+            "location": "Front panel",
+            "material_size": "60 in",
+            "color": "Black",
+            "uom": "yd",
+            "quantity": 2,
+        }
+        db.session.add(ProjectMaterial(colorway_id=colorway.id, **complete_fields))
+        for field, value in (
+            ("material", ""),
+            ("supplier", ""),
+            ("supplier_contact", ""),
+            ("location", ""),
+            ("material_size", ""),
+            ("color", ""),
+            ("uom", ""),
+            ("quantity", 0),
+        ):
+            db.session.add(
+                ProjectMaterial(
+                    colorway_id=colorway.id,
+                    **{**complete_fields, field: value},
+                )
+            )
+        db.session.commit()
+
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["_user_id"] = str(User.query.first().id)
+            session["_fresh"] = True
+
+        response = client.get("/api/projects")
+        assert response.status_code == 200
+        payload = response.get_json()
+        project_payload = next(row for row in payload["projects"] if row["id"] == project.id)
+        assert project_payload["missing_bom_items"] == 8
+
+
+def test_bom_line_patch_rechecks_and_logs_field_changes(app):
+    with app.app_context():
+        project = Project(name="BOM edit check")
+        colorway = ProjectColor(name="Black", project=project)
+        material = ProjectMaterial(
+            colorway=colorway,
+            name="Shell",
+            material="Cotton",
+            supplier="Mill",
+            supplier_contact="Contact",
+            quantity=0,
+            location="Body",
+            material_size="60 in",
+            uom="yd",
+            color="Black",
+        )
+        db.session.add(project)
+        db.session.add(material)
+        db.session.commit()
+
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["_user_id"] = str(User.query.first().id)
+            session["_fresh"] = True
+
+        response = client.patch(f"/api/bom-lines/{material.id}", json={"supplier": "   "})
+        assert response.status_code == 400
+        assert ProjectChangeLog.query.count() == 0
+        assert material.supplier == "Mill"
+
+        response = client.patch(
+            f"/api/bom-lines/{material.id}",
+            json={"quantity": 2.5, "supplier": "New Mill"},
+        )
+        assert response.status_code == 200
+        assert response.get_json()["missing_bom_items"] == 0
+
+        entries = ProjectChangeLog.query.filter_by(action="updated").all()
+        assert {(entry.field_name, entry.old_value, entry.new_value) for entry in entries} == {
+            ("quantity", "0.0", "2.5"),
+            ("supplier", "Mill", "New Mill"),
+        }
+        assert all(entry.user_id == User.query.first().id for entry in entries)
+        assert all(entry.changed_at is not None for entry in entries)
+
+        response = client.patch(f"/api/bom-lines/{material.id}", json={"quantity": 0})
+        assert response.status_code == 200
+        assert response.get_json()["missing_bom_items"] == 1
+
+
+def test_create_and_delete_bom_line_are_logged_and_recheck_missing_info(app):
+    with app.app_context():
+        project = Project(name="BOM create delete")
+        colorway = ProjectColor(name="Navy", project=project)
+        db.session.add(project)
+        db.session.add(colorway)
+        db.session.commit()
+
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["_user_id"] = str(User.query.first().id)
+            session["_fresh"] = True
+
+        response = client.post(
+            f"/api/projects/{project.id}/bom-lines",
+            json={
+                "colorway_id": colorway.id,
+                "name": "Shell",
+                "material": "Cotton twill",
+            },
+        )
+        assert response.status_code == 201
+        result = response.get_json()
+        line_id = result["material"]["id"]
+        assert result["missing_bom_items"] == 1
+        assert ProjectChangeLog.query.filter_by(
+            action="created",
+            entity_id=line_id,
+        ).count() == len(MATERIAL_FIELDS)
+
+        response = client.get(f"/api/projects/{project.id}/history")
+        assert response.status_code == 200
+        history = response.get_json()["history"]
+        assert history[0]["username"] == "tester"
+        assert history[0]["action"] == "created"
+        assert history[0]["field_name"] in MATERIAL_FIELDS
+        assert history[0]["changed_at"]
+
+        response = client.patch(
+            f"/api/bom-lines/{line_id}",
+            json={
+                "supplier": "Mill",
+                "supplier_contact": "Contact",
+                "quantity": 12.5,
+                "location": "Body",
+                "material_size": "60 in",
+                "uom": "yd",
+                "color": "Navy",
+            },
+        )
+        assert response.status_code == 200
+        assert response.get_json()["missing_bom_items"] == 0
+
+        response = client.delete(f"/api/bom-lines/{line_id}")
+        assert response.status_code == 200
+        assert response.get_json()["missing_bom_items"] == 0
+        deleted = ProjectChangeLog.query.filter_by(
+            action="deleted",
+            entity_id=line_id,
+        ).all()
+        assert deleted
+        assert all(entry.old_value is not None and entry.new_value is None for entry in deleted)
+
+
+def test_bom_line_endpoints_reject_invalid_values(app):
+    with app.app_context():
+        project = Project(name="BOM validation")
+        colorway = ProjectColor(name="Black", project=project)
+        material = ProjectMaterial(colorway=colorway, material="Cotton", quantity=1)
+        db.session.add_all([project, material])
+        db.session.commit()
+
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["_user_id"] = str(User.query.first().id)
+            session["_fresh"] = True
+
+        for invalid_quantity in (-1, 1.2e309, "3", True):
+            response = client.patch(
+                f"/api/bom-lines/{material.id}",
+                json={"quantity": invalid_quantity},
+            )
+            assert response.status_code == 400
+            assert "Quantity" in response.get_json()["error"]
+
+        response = client.post(
+            f"/api/projects/{project.id}/bom-lines",
+            json={"colorway_id": colorway.id, "material": "   "},
+        )
+        assert response.status_code == 400
+        assert "Material cannot be blank" in response.get_json()["error"]
+        assert ProjectMaterial.query.count() == 1
+        assert ProjectChangeLog.query.count() == 0
 
 
 def test_does_not_overwrite_existing_project_fields(app):
