@@ -3,11 +3,14 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file
 from flask_login import login_required
+from sqlalchemy.orm import joinedload
 
 from src.api.extensions import db
-from src.api.models import Project, ProjectFile
+from src.api.models import Project, ProjectFile, ProjectColor, ProjectMaterial, ValueSource
+from src.api.services.provenance import serialize_values
 from src.api.routes.projects import (
     MATERIAL_FIELDS,
+    MISSING_BOM_ITEM,
     REQUIRED_MATERIAL_FIELDS,
     _material_payload,
     _missing_bom_count,
@@ -108,6 +111,62 @@ def get_project(project_id):
         "files": [_file_payload(f) for f in sorted(project.files, key=lambda f: f.id)],
         "missing_bom_items": _missing_bom_count(project.id),
     }), 200
+
+
+def _part_payload(material, sources):
+    project_id = material.colorway.project_id
+    return {
+        **_material_payload(material),
+        "project_id": project_id,
+        "colorway_name": material.colorway.name,
+        "missing_fields": missing_fields(material),
+        "details_url": f"/api/projects/{project_id}/materials/{material.id}",
+        "fields": serialize_values(material, MATERIAL_FIELDS, sources),
+    }
+
+
+@project_detail_bp.route("/projects/<int:project_id>/incomplete-materials", methods=["GET"])
+@login_required
+def get_missing_items(project_id):
+    if db.session.get(Project, project_id) is None:
+        return jsonify(error="Project not found."), 404
+
+    materials = (
+        ProjectMaterial.query.join(ProjectColor)
+        .options(joinedload(ProjectMaterial.colorway))
+        .filter(ProjectColor.project_id == project_id, MISSING_BOM_ITEM)
+        .order_by(ProjectColor.id, ProjectMaterial.id)
+        .all()
+    )
+    sources = {}
+    if materials:
+        for source in ValueSource.query.filter(
+            ValueSource.project_id == project_id,
+            ValueSource.entity_type == "material",
+            ValueSource.entity_id.in_([m.id for m in materials]),
+        ).all():
+            sources.setdefault(source.entity_id, {})[source.field] = source
+    items = [_part_payload(m, sources.get(m.id, {})) for m in materials]
+    return jsonify(project_id=project_id, missing_items=items, total=len(items)), 200
+
+
+@project_detail_bp.route("/projects/<int:project_id>/materials/<int:material_id>", methods=["GET"])
+@login_required
+def get_part_details(project_id, material_id):
+    if db.session.get(Project, project_id) is None:
+        return jsonify(error="Project not found."), 404
+    material = (
+        ProjectMaterial.query.join(ProjectColor)
+        .options(joinedload(ProjectMaterial.colorway))
+        .filter(ProjectColor.project_id == project_id, ProjectMaterial.id == material_id)
+        .first()
+    )
+    if material is None:
+        return jsonify(error="BOM line not found."), 404
+    sources = ValueSource.query.filter_by(
+        project_id=project_id, entity_type="material", entity_id=material_id,
+    ).all()
+    return jsonify(material=_part_payload(material, {s.field: s for s in sources})), 200
 
 
 def _resolve_stored_path(file):
