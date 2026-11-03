@@ -3,6 +3,10 @@
 Start server with python run.py
 Server uses cors and CSRF tokens for security and cookies
 
+## Database setup
+
+Run `SQL_Setup.sql` in MySQL to create the database and tables. 
+
 ## BOM line API
 
 - `PATCH /api/bom-lines/<line_id>` updates one or more editable BOM fields.

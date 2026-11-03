@@ -139,3 +139,95 @@ def test_both_endpoints_need_login(app, uploaded, sketch):
         anon = app.test_client()
         assert anon.get(f"/api/projects/{project_id}").status_code == 401
         assert anon.get(f"/api/files/{file_id}").status_code == 401
+
+def test_sources_survive_main_bom_edits(employee_client, uploaded):
+    body = employee_client.get(f"/api/projects/{uploaded.id}").get_json()
+    material = body["colorways"][0]["materials"][0]
+    source = material["fields"]["supplier"]["source"]
+    assert source["kind"] == "file"
+    assert source["file_name"] == "sample_bom.xlsx"
+    assert employee_client.get(source["url"]).status_code == 200
+    response = employee_client.patch(f'/api/bom-lines/{material["id"]}', json={"supplier": "Manual supplier"})
+    assert response.status_code == 200
+    body = employee_client.get(f"/api/projects/{uploaded.id}").get_json()
+    fields = body["colorways"][0]["materials"][0]["fields"]
+    assert fields["supplier"]["source"]["kind"] == "manual"
+    assert fields["supplier"]["source"]["url"] is None
+    assert fields["color"]["source"]["kind"] == "file"
+    response = employee_client.patch(f'/api/projects/{uploaded.id}/materials/{material["id"]}', json={"quantity": 1.5})
+    assert response.status_code == 200
+    assert response.json["project"]["materials"][0]["fields"]["quantity"]["value"] == 1.5
+    history = employee_client.get(f'/api/projects/{uploaded.id}/history').json["history"]
+    assert any(entry["field_name"] == "quantity" and entry["new_value"] == "1.5" for entry in history)
+
+
+def test_missing_items_lists_each_colorway_and_links_to_details(employee_client, uploaded):
+    response = employee_client.get(f'/api/projects/{uploaded.id}/missing-items')
+    assert response.status_code == 200
+    body = response.json
+    overview = employee_client.get(f'/api/projects/{uploaded.id}').json
+    assert body['total'] == overview['missing_bom_items'] == len(COLORWAYS)
+    assert [m['colorway_name'] for m in body['missing_items']] == COLORWAYS
+    for item in body['missing_items']:
+        assert item['name'] == 'Hang tag'
+        assert item['missing_fields'] == ['supplier']
+        details = employee_client.get(item['details_url'])
+        assert details.status_code == 200
+        assert details.json['material'] == item
+        source = item['fields']['name']['source']
+        assert source['file_name'] == 'sample_bom.xlsx'
+        assert employee_client.get(source['url']).status_code == 200
+
+
+def test_complete_part_details_and_correcting_missing_item(employee_client, uploaded):
+    body = employee_client.get(f'/api/projects/{uploaded.id}').json
+    complete = body['colorways'][0]['materials'][0]
+    response = employee_client.get(f'/api/projects/{uploaded.id}/materials/{complete["id"]}')
+    assert response.status_code == 200
+    part = response.json['material']
+    assert part['missing_fields'] == []
+    for field in ('name', 'material', 'supplier', 'quantity', 'notes'):
+        assert part[field] == complete[field]
+    item = employee_client.get(f'/api/projects/{uploaded.id}/missing-items').json['missing_items'][0]
+    assert employee_client.patch(f'/api/bom-lines/{item["id"]}', json={'supplier': 'Acme'}).status_code == 200
+    remaining = employee_client.get(f'/api/projects/{uploaded.id}/missing-items').json
+    assert remaining['total'] == len(COLORWAYS) - 1
+    assert item['id'] not in [m['id'] for m in remaining['missing_items']]
+    part = employee_client.get(item['details_url']).json['material']
+    assert part['fields']['supplier']['source']['kind'] == 'manual'
+    assert part['missing_fields'] == []
+
+
+def test_missing_items_blank_fields_and_quantity_rules(employee_client):
+    project = Project(name='Incomplete')
+    colorway = ProjectColor(project=project, name='Blue')
+    material = ProjectMaterial(colorway=colorway, material='  ', supplier=None, quantity=0)
+    db.session.add_all([project, colorway, material])
+    db.session.commit()
+    body = employee_client.get(f'/api/projects/{project.id}/missing-items').json
+    assert body['total'] == 1
+    assert set(body['missing_items'][0]['missing_fields']) == {
+        'material', 'supplier', 'supplier_contact', 'location', 'material_size', 'color', 'uom', 'quantity',
+    }
+    assert employee_client.get(f'/api/projects/{project.id}').json['missing_bom_items'] == 1
+
+
+def test_new_endpoints_empty_and_wrong_project(employee_client, uploaded):
+    project = Project(name='Empty')
+    db.session.add(project)
+    db.session.commit()
+    assert employee_client.get(f'/api/projects/{project.id}/missing-items').json == {
+        'project_id': project.id, 'missing_items': [], 'total': 0,
+    }
+    material_id = uploaded.colorways[0].materials[0].id
+    assert employee_client.get(f'/api/projects/{project.id}/materials/{material_id}').status_code == 404
+    assert employee_client.get(f'/api/projects/{uploaded.id}/materials/99999').status_code == 404
+    assert employee_client.get('/api/projects/99999/missing-items').status_code == 404
+    assert employee_client.get(f'/api/projects/99999/materials/{material_id}').status_code == 404
+
+
+def test_new_endpoints_require_login(app):
+    with app.app_context():
+        client = app.test_client()
+        assert client.get('/api/projects/1/missing-items').status_code == 401
+        assert client.get('/api/projects/1/materials/1').status_code == 401
