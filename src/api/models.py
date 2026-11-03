@@ -146,3 +146,18 @@ class ProjectFile(db.Model):
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
+
+class ValueSource(db.Model):
+    __tablename__ = "value_sources"
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=False, index=True)
+    entity_type = db.Column(db.String(30), nullable=False)
+    entity_id = db.Column(db.Integer, nullable=False)
+    field = db.Column(db.String(50), nullable=False)
+    kind = db.Column(db.String(20), nullable=False)
+    file_id = db.Column(db.Integer, db.ForeignKey("files.id"))
+    file_name = db.Column(db.String(255))
+    sheet = db.Column(db.String(255))
+    row = db.Column(db.Integer)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    __table_args__ = (db.UniqueConstraint("project_id", "entity_type", "entity_id", "field", name="uq_value_source"),)

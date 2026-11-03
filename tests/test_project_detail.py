@@ -1,0 +1,233 @@
+import io
+from pathlib import Path
+
+import pytest
+
+from src.api.extensions import db
+from src.api.models import Project, ProjectColor, ProjectFile, ProjectMaterial
+from sample_bom import COLORWAYS, SAMPLE_LINES, SAMPLE_PROJECT, build_sample_bom
+
+SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'
+
+
+@pytest.fixture
+def uploaded(app, employee_client, tmp_path):
+    """A project created by uploading the sample BOM, like a real user would."""
+    path = build_sample_bom(tmp_path / "sample_bom.xlsx")
+    res = employee_client.post(
+        "/api/projects/import",
+        data={"file": (io.BytesIO(path.read_bytes()), "sample_bom.xlsx"), "name": "Sample Jacket"},
+        content_type="multipart/form-data",
+    )
+    return db.session.get(Project, res.get_json()["project_id"])
+
+
+@pytest.fixture
+def sketch(app, uploaded, employee):
+    """A sketch file in the upload folder, attached to the project."""
+    folder = Path(app.config["UPLOAD_FOLDER"])
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "front.svg").write_bytes(SVG)
+    record = ProjectFile(project_id=uploaded.id, user_id=employee.id, file_name="front.svg",
+                         file_path=str(folder / "front.svg"), file_type="image/svg+xml")
+    db.session.add(record)
+    db.session.commit()
+    return record
+
+
+def test_project_page_gets_everything_in_one_call(employee_client, uploaded, sketch):
+    res = employee_client.get(f"/api/projects/{uploaded.id}")
+    assert res.status_code == 200
+    body = res.get_json()
+
+    project = body["project"]
+    assert project["name"] == "Sample Jacket"
+    assert project["stage"] == "in progress"
+    assert project["style_description"] == SAMPLE_PROJECT["description"]
+    assert project["customer"] == SAMPLE_PROJECT["customer"]
+    assert project["created_at"]
+
+    assert [c["name"] for c in body["colorways"]] == COLORWAYS
+    navy = body["colorways"][0]["materials"]
+    assert [m["name"] for m in navy] == [line[0] for line in SAMPLE_LINES]
+    shell = navy[0]
+    assert (shell["material"], shell["supplier"], shell["quantity"], shell["uom"]) == ("100% cotton twill", "Acme Mills", 2, "yd")
+
+    files = {f["file_name"]: f for f in body["files"]}
+    assert set(files) == {"sample_bom.xlsx", "front.svg"}
+    assert files["front.svg"]["url"] == f"/api/files/{sketch.id}"
+
+
+def test_each_line_lists_the_fields_it_is_missing(employee_client, uploaded):
+    body = employee_client.get(f"/api/projects/{uploaded.id}").get_json()
+    flags = {m["name"]: m["missing_fields"] for m in body["colorways"][0]["materials"]}
+
+    assert flags == {"Shell fabric": [], "Button": [], "Hang tag": ["supplier"]}
+    # Same rule as the projects list: one flagged line per colorway
+    assert body["missing_bom_items"] == len(COLORWAYS)
+
+
+def test_zero_quantity_counts_as_missing(employee_client, uploaded):
+    line = ProjectMaterial.query.join(ProjectColor).filter(
+        ProjectColor.project_id == uploaded.id, ProjectMaterial.name == "Button").first()
+    line.quantity = 0
+    db.session.commit()
+
+    materials = employee_client.get(f"/api/projects/{uploaded.id}").get_json()["colorways"][0]["materials"]
+    button = next(m for m in materials if m["id"] == line.id)
+    assert button["missing_fields"] == ["quantity"]
+
+
+def test_project_with_no_bom_or_files(employee_client):
+    project = Project(name="Blank")
+    db.session.add(project)
+    db.session.commit()
+
+    body = employee_client.get(f"/api/projects/{project.id}").get_json()
+    assert body["colorways"] == [] and body["files"] == [] and body["missing_bom_items"] == 0
+
+
+def test_wrong_project_id_is_a_404(employee_client):
+    res = employee_client.get("/api/projects/9999")
+    assert res.status_code == 404
+    assert res.get_json() == {"error": "Project not found."}
+
+
+def test_sketch_loads_from_the_file_endpoint(employee_client, sketch):
+    res = employee_client.get(f"/api/files/{sketch.id}")
+
+    assert res.status_code == 200
+    assert res.data == SVG
+    assert res.mimetype == "image/svg+xml"
+    assert "attachment" not in res.headers.get("Content-Disposition", "")
+    assert "sandbox" in res.headers["Content-Security-Policy"]
+    assert res.headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_uploaded_bom_can_be_downloaded(employee_client, uploaded):
+    record = ProjectFile.query.filter_by(project_id=uploaded.id, file_name="sample_bom.xlsx").one()
+    res = employee_client.get(f"/api/files/{record.id}?download=1")
+
+    assert res.status_code == 200
+    assert res.data[:2] == b"PK"  # xlsx files are zip archives
+    assert "spreadsheetml" in res.mimetype  # stored type was just "xlsx"
+    assert "attachment" in res.headers["Content-Disposition"]
+
+
+@pytest.mark.parametrize("file_path", ["gone.png", "../../secret.txt"])
+def test_missing_or_outside_files_are_not_served(app, employee_client, uploaded, employee, tmp_path, file_path):
+    (tmp_path / "secret.txt").write_text("not for you")
+    record = ProjectFile(project_id=uploaded.id, user_id=employee.id, file_name="x", file_path=file_path)
+    db.session.add(record)
+    db.session.commit()
+
+    res = employee_client.get(f"/api/files/{record.id}")
+    assert res.status_code == 404
+    assert res.get_json() == {"error": "This file is missing from storage."}
+
+
+def test_unknown_file_is_a_404(employee_client):
+    res = employee_client.get("/api/files/9999")
+    assert res.status_code == 404
+    assert res.get_json() == {"error": "File not found."}
+
+
+def test_both_endpoints_need_login(app, uploaded, sketch):
+    project_id, file_id = uploaded.id, sketch.id
+    # A fresh app context, so nothing from the logged-in requests above carries over
+    with app.app_context():
+        anon = app.test_client()
+        assert anon.get(f"/api/projects/{project_id}").status_code == 401
+        assert anon.get(f"/api/files/{file_id}").status_code == 401
+
+def test_sources_survive_main_bom_edits(employee_client, uploaded):
+    body = employee_client.get(f"/api/projects/{uploaded.id}").get_json()
+    material = body["colorways"][0]["materials"][0]
+    source = material["fields"]["supplier"]["source"]
+    assert source["kind"] == "file"
+    assert source["file_name"] == "sample_bom.xlsx"
+    assert employee_client.get(source["url"]).status_code == 200
+    response = employee_client.patch(f'/api/bom-lines/{material["id"]}', json={"supplier": "Manual supplier"})
+    assert response.status_code == 200
+    body = employee_client.get(f"/api/projects/{uploaded.id}").get_json()
+    fields = body["colorways"][0]["materials"][0]["fields"]
+    assert fields["supplier"]["source"]["kind"] == "manual"
+    assert fields["supplier"]["source"]["url"] is None
+    assert fields["color"]["source"]["kind"] == "file"
+    response = employee_client.patch(f'/api/projects/{uploaded.id}/materials/{material["id"]}', json={"quantity": 1.5})
+    assert response.status_code == 200
+    assert response.json["project"]["materials"][0]["fields"]["quantity"]["value"] == 1.5
+    history = employee_client.get(f'/api/projects/{uploaded.id}/history').json["history"]
+    assert any(entry["field_name"] == "quantity" and entry["new_value"] == "1.5" for entry in history)
+
+
+def test_missing_items_lists_each_colorway_and_links_to_details(employee_client, uploaded):
+    response = employee_client.get(f'/api/projects/{uploaded.id}/missing-items')
+    assert response.status_code == 200
+    body = response.json
+    overview = employee_client.get(f'/api/projects/{uploaded.id}').json
+    assert body['total'] == overview['missing_bom_items'] == len(COLORWAYS)
+    assert [m['colorway_name'] for m in body['missing_items']] == COLORWAYS
+    for item in body['missing_items']:
+        assert item['name'] == 'Hang tag'
+        assert item['missing_fields'] == ['supplier']
+        details = employee_client.get(item['details_url'])
+        assert details.status_code == 200
+        assert details.json['material'] == item
+        source = item['fields']['name']['source']
+        assert source['file_name'] == 'sample_bom.xlsx'
+        assert employee_client.get(source['url']).status_code == 200
+
+
+def test_complete_part_details_and_correcting_missing_item(employee_client, uploaded):
+    body = employee_client.get(f'/api/projects/{uploaded.id}').json
+    complete = body['colorways'][0]['materials'][0]
+    response = employee_client.get(f'/api/projects/{uploaded.id}/materials/{complete["id"]}')
+    assert response.status_code == 200
+    part = response.json['material']
+    assert part['missing_fields'] == []
+    for field in ('name', 'material', 'supplier', 'quantity', 'notes'):
+        assert part[field] == complete[field]
+    item = employee_client.get(f'/api/projects/{uploaded.id}/missing-items').json['missing_items'][0]
+    assert employee_client.patch(f'/api/bom-lines/{item["id"]}', json={'supplier': 'Acme'}).status_code == 200
+    remaining = employee_client.get(f'/api/projects/{uploaded.id}/missing-items').json
+    assert remaining['total'] == len(COLORWAYS) - 1
+    assert item['id'] not in [m['id'] for m in remaining['missing_items']]
+    part = employee_client.get(item['details_url']).json['material']
+    assert part['fields']['supplier']['source']['kind'] == 'manual'
+    assert part['missing_fields'] == []
+
+
+def test_missing_items_blank_fields_and_quantity_rules(employee_client):
+    project = Project(name='Incomplete')
+    colorway = ProjectColor(project=project, name='Blue')
+    material = ProjectMaterial(colorway=colorway, material='  ', supplier=None, quantity=0)
+    db.session.add_all([project, colorway, material])
+    db.session.commit()
+    body = employee_client.get(f'/api/projects/{project.id}/missing-items').json
+    assert body['total'] == 1
+    assert set(body['missing_items'][0]['missing_fields']) == {
+        'material', 'supplier', 'supplier_contact', 'location', 'material_size', 'color', 'uom', 'quantity',
+    }
+    assert employee_client.get(f'/api/projects/{project.id}').json['missing_bom_items'] == 1
+
+
+def test_new_endpoints_empty_and_wrong_project(employee_client, uploaded):
+    project = Project(name='Empty')
+    db.session.add(project)
+    db.session.commit()
+    assert employee_client.get(f'/api/projects/{project.id}/missing-items').json == {
+        'project_id': project.id, 'missing_items': [], 'total': 0,
+    }
+    material_id = uploaded.colorways[0].materials[0].id
+    assert employee_client.get(f'/api/projects/{project.id}/materials/{material_id}').status_code == 404
+    assert employee_client.get(f'/api/projects/{uploaded.id}/materials/99999').status_code == 404
+    assert employee_client.get('/api/projects/99999/missing-items').status_code == 404
+    assert employee_client.get(f'/api/projects/99999/materials/{material_id}').status_code == 404
+
+
+def test_new_endpoints_require_login(app):
+    with app.app_context():
+        client = app.test_client()
+        assert client.get('/api/projects/1/missing-items').status_code == 401
+        assert client.get('/api/projects/1/materials/1').status_code == 401
