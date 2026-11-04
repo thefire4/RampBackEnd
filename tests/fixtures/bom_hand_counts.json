@@ -1,0 +1,472 @@
+[
+  {
+    "id": "duckworth-dw11038",
+    "file": "DW11038_M's Snowcrest_Shirt Jac_ REV2 BTUSA PO 1654 07.10.2026 (2).xlsx",
+    "project_name": "Duckworth DW11038",
+    "total_bom_lines": 26,
+    "checked_fields": [
+      "name",
+      "material",
+      "supplier",
+      "supplier_contact",
+      "quantity",
+      "location",
+      "article_no",
+      "material_size",
+      "uom",
+      "color"
+    ],
+    "expected_lines": [
+      {
+        "source_row": 10,
+        "colorway": "BLACK",
+        "blank_field_count": 3,
+        "blank_fields": [
+          "quantity",
+          "material_size",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 10,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 3,
+        "blank_fields": [
+          "quantity",
+          "material_size",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 11,
+        "colorway": "BLACK",
+        "blank_field_count": 4,
+        "blank_fields": [
+          "quantity",
+          "article_no",
+          "material_size",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 11,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 4,
+        "blank_fields": [
+          "quantity",
+          "article_no",
+          "material_size",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 12,
+        "colorway": "BLACK",
+        "blank_field_count": 2,
+        "blank_fields": [
+          "material_size",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 12,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 2,
+        "blank_fields": [
+          "material_size",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 13,
+        "colorway": "BLACK",
+        "blank_field_count": 3,
+        "blank_fields": [
+          "quantity",
+          "material_size",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 13,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 3,
+        "blank_fields": [
+          "quantity",
+          "material_size",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 14,
+        "colorway": "BLACK",
+        "blank_field_count": 0,
+        "blank_fields": []
+      },
+      {
+        "source_row": 14,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 0,
+        "blank_fields": []
+      },
+      {
+        "source_row": 15,
+        "colorway": "BLACK",
+        "blank_field_count": 2,
+        "blank_fields": [
+          "material",
+          "article_no"
+        ]
+      },
+      {
+        "source_row": 15,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 2,
+        "blank_fields": [
+          "material",
+          "article_no"
+        ]
+      },
+      {
+        "source_row": 16,
+        "colorway": "BLACK",
+        "blank_field_count": 1,
+        "blank_fields": [
+          "article_no"
+        ]
+      },
+      {
+        "source_row": 16,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 1,
+        "blank_fields": [
+          "article_no"
+        ]
+      },
+      {
+        "source_row": 17,
+        "colorway": "BLACK",
+        "blank_field_count": 1,
+        "blank_fields": [
+          "article_no"
+        ]
+      },
+      {
+        "source_row": 17,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 1,
+        "blank_fields": [
+          "article_no"
+        ]
+      },
+      {
+        "source_row": 18,
+        "colorway": "BLACK",
+        "blank_field_count": 1,
+        "blank_fields": [
+          "article_no"
+        ]
+      },
+      {
+        "source_row": 18,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 1,
+        "blank_fields": [
+          "article_no"
+        ]
+      },
+      {
+        "source_row": 19,
+        "colorway": "BLACK",
+        "blank_field_count": 1,
+        "blank_fields": [
+          "article_no"
+        ]
+      },
+      {
+        "source_row": 19,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 1,
+        "blank_fields": [
+          "article_no"
+        ]
+      },
+      {
+        "source_row": 20,
+        "colorway": "BLACK",
+        "blank_field_count": 0,
+        "blank_fields": []
+      },
+      {
+        "source_row": 20,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 0,
+        "blank_fields": []
+      },
+      {
+        "source_row": 21,
+        "colorway": "BLACK",
+        "blank_field_count": 3,
+        "blank_fields": [
+          "article_no",
+          "material_size",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 21,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 3,
+        "blank_fields": [
+          "article_no",
+          "material_size",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 22,
+        "colorway": "BLACK",
+        "blank_field_count": 8,
+        "blank_fields": [
+          "material",
+          "supplier",
+          "supplier_contact",
+          "quantity",
+          "location",
+          "article_no",
+          "material_size",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 22,
+        "colorway": "DARK OLIVE",
+        "blank_field_count": 8,
+        "blank_fields": [
+          "material",
+          "supplier",
+          "supplier_contact",
+          "quantity",
+          "location",
+          "article_no",
+          "material_size",
+          "uom"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ns008c-zip-jacket",
+    "file": "NS008C_Zip Jacket (2).xlsm",
+    "project_name": "NS008C Zip Jacket",
+    "total_bom_lines": 17,
+    "checked_fields": [
+      "name",
+      "material",
+      "supplier",
+      "supplier_contact",
+      "quantity",
+      "location",
+      "article_no",
+      "material_size",
+      "uom",
+      "color"
+    ],
+    "expected_lines": [
+      {
+        "source_row": 9,
+        "colorway": "Black",
+        "blank_field_count": 2,
+        "blank_fields": [
+          "quantity",
+          "material_size"
+        ]
+      },
+      {
+        "source_row": 10,
+        "colorway": "Black",
+        "blank_field_count": 2,
+        "blank_fields": [
+          "quantity",
+          "material_size"
+        ]
+      },
+      {
+        "source_row": 11,
+        "colorway": "Black",
+        "blank_field_count": 2,
+        "blank_fields": [
+          "quantity",
+          "material_size"
+        ]
+      },
+      {
+        "source_row": 12,
+        "colorway": "Black",
+        "blank_field_count": 2,
+        "blank_fields": [
+          "quantity",
+          "material_size"
+        ]
+      },
+      {
+        "source_row": 14,
+        "colorway": "Black",
+        "blank_field_count": 0,
+        "blank_fields": []
+      },
+      {
+        "source_row": 15,
+        "colorway": "Black",
+        "blank_field_count": 6,
+        "blank_fields": [
+          "material",
+          "supplier",
+          "location",
+          "article_no",
+          "material_size",
+          "supplier_contact"
+        ]
+      },
+      {
+        "source_row": 16,
+        "colorway": "Black",
+        "blank_field_count": 3,
+        "blank_fields": [
+          "material",
+          "article_no",
+          "material_size"
+        ]
+      },
+      {
+        "source_row": 17,
+        "colorway": "Black",
+        "blank_field_count": 3,
+        "blank_fields": [
+          "material",
+          "material_size",
+          "color"
+        ]
+      },
+      {
+        "source_row": 19,
+        "colorway": "Black",
+        "blank_field_count": 7,
+        "blank_fields": [
+          "material",
+          "supplier",
+          "location",
+          "article_no",
+          "material_size",
+          "quantity",
+          "supplier_contact"
+        ]
+      },
+      {
+        "source_row": 20,
+        "colorway": "Black",
+        "blank_field_count": 7,
+        "blank_fields": [
+          "material",
+          "supplier",
+          "location",
+          "article_no",
+          "material_size",
+          "quantity",
+          "supplier_contact"
+        ]
+      },
+      {
+        "source_row": 21,
+        "colorway": "Black",
+        "blank_field_count": 7,
+        "blank_fields": [
+          "material",
+          "supplier",
+          "location",
+          "article_no",
+          "material_size",
+          "quantity",
+          "supplier_contact"
+        ]
+      },
+      {
+        "source_row": 22,
+        "colorway": "Black",
+        "blank_field_count": 7,
+        "blank_fields": [
+          "material",
+          "supplier",
+          "location",
+          "article_no",
+          "material_size",
+          "quantity",
+          "supplier_contact"
+        ]
+      },
+      {
+        "source_row": 24,
+        "colorway": "Black",
+        "blank_field_count": 4,
+        "blank_fields": [
+          "material",
+          "article_no",
+          "material_size",
+          "color"
+        ]
+      },
+      {
+        "source_row": 25,
+        "colorway": "Black",
+        "blank_field_count": 4,
+        "blank_fields": [
+          "material",
+          "article_no",
+          "material_size",
+          "color"
+        ]
+      },
+      {
+        "source_row": 26,
+        "colorway": "Black",
+        "blank_field_count": 6,
+        "blank_fields": [
+          "material",
+          "location",
+          "article_no",
+          "material_size",
+          "uom",
+          "color"
+        ]
+      },
+      {
+        "source_row": 27,
+        "colorway": "Black",
+        "blank_field_count": 7,
+        "blank_fields": [
+          "material",
+          "article_no",
+          "supplier",
+          "material_size",
+          "supplier_contact",
+          "color",
+          "uom"
+        ]
+      },
+      {
+        "source_row": 28,
+        "colorway": "Black",
+        "blank_field_count": 7,
+        "blank_fields": [
+          "material",
+          "article_no",
+          "supplier",
+          "supplier_contact",
+          "location",
+          "material_size",
+          "color"
+        ]
+      }
+    ]
+  }
+]

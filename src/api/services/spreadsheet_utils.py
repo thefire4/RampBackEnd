@@ -17,7 +17,10 @@ from src.api.services.import_errors import DocumentImportError
 
 
 def load_sheet_rows(path: Path, sheet_name: Optional[str] = None) -> list[tuple[int, tuple[Any, ...]]]:
-    """Return (1-based row number, row values) for a spreadsheet tab or CSV."""
+    """Return visible rows, preserving source row/column positions.
+
+    Hidden Excel columns are replaced with None; CSV has no visibility metadata.
+    """
     suffix = path.suffix.lower()
     if suffix == ".csv":
         return _load_csv_rows(path)
@@ -42,7 +45,8 @@ def _load_csv_rows(path: Path) -> list[tuple[int, tuple[Any, ...]]]:
 
 def _load_xlsx_rows(path: Path, sheet_name: Optional[str]) -> list[tuple[int, tuple[Any, ...]]]:
     try:
-        workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        # Normal mode exposes row/column dimensions (unavailable in read-only mode).
+        workbook = openpyxl.load_workbook(path, read_only=False, data_only=True)
     except OSError as exc:
         raise DocumentImportError(f"Could not read Excel file: {exc}") from exc
     except Exception as exc:
@@ -55,9 +59,20 @@ def _load_xlsx_rows(path: Path, sheet_name: Optional[str]) -> list[tuple[int, tu
             sheet = workbook[sheet_name]
         else:
             sheet = workbook.active
+        hidden_columns = set()
+        for letter, dimension in sheet.column_dimensions.items():
+            if dimension.hidden:
+                first = dimension.min or openpyxl.utils.column_index_from_string(letter)
+                last = dimension.max or first
+                hidden_columns.update(range(first, last + 1))
         rows: list[tuple[int, tuple[Any, ...]]] = []
         for index, row in enumerate(sheet.iter_rows(values_only=True), start=1):
-            rows.append((index, tuple(row)))
+            if sheet.row_dimensions[index].hidden:
+                continue
+            rows.append((index, tuple(
+                None if column in hidden_columns else value
+                for column, value in enumerate(row, start=1)
+            )))
         return rows
     finally:
         workbook.close()

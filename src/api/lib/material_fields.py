@@ -39,6 +39,8 @@ BOM_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "sku",
     ),
     "material_size": (
+        "measured_size",
+        "measured size",
         "size",
         "size ",
         "dimensions",

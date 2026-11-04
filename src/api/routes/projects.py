@@ -53,7 +53,7 @@ MATERIAL_FIELD_LENGTHS = {
     "location": 1000,
     "article_no": 100,
     "material_size": 50,
-    "uom": 10,
+    "uom": 50,
     "color": 50,
 }
 PROJECT_FIELDS = {

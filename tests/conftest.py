@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from werkzeug.security import generate_password_hash
 
@@ -65,3 +67,21 @@ def employee_client(app, employee):
 @pytest.fixture
 def admin_client(app, admin):
     return logged_in_client(app, admin)
+
+def pytest_configure(config):
+    # Apply before pytest prints its header; leave other suites' defaults alone.
+    if config.args and all(Path(str(arg).split("::", 1)[0]).name == "test_bom_hand_counts.py" for arg in config.args):
+        config.option.verbose = -1
+        config.option.reportchars = "s"
+        config.option.tbstyle = "no"
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Always show hand-count details, including for passing captured tests."""
+    for reports in terminalreporter.stats.values():
+        for report in reports:
+            if getattr(report, "when", None) != "call":
+                continue
+            for name, text in report.user_properties:
+                if name == "bom_summary":
+                    terminalreporter.write_line(text)
