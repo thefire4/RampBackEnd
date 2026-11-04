@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from flask import current_app
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
@@ -48,12 +49,23 @@ def import_uploaded_document(
     suffix = Path(upload.filename).suffix.lower()
     if suffix not in {".xlsx", ".xlsm", ".csv", ".pdf", ".xltx", ".xltm"}:
         raise DocumentImportError(
-            f"Unsupported file type '{suffix}'. Upload Excel, CSV, or PDF.",
+            f"File '{upload.filename}' has unsupported type '{suffix}'. "
+            "Upload Excel, CSV, or PDF.",
             status_code=415,
         )
 
-    stored_path = _persist_upload(upload, upload_dir, suffix)
+    max_size = current_app.config["MAX_UPLOAD_SIZE"]
+    upload_size = _upload_size(upload)
+    if upload_size > max_size:
+        raise DocumentImportError(
+            f"File '{upload.filename}' is too large "
+            f"({upload_size} bytes; maximum is {max_size} bytes).",
+            status_code=413,
+        )
+
+    stored_path: Optional[Path] = None
     try:
+        stored_path = _persist_upload(upload, upload_dir, suffix)
         return _import_saved_file(
             stored_path,
             project=project,
@@ -63,9 +75,20 @@ def import_uploaded_document(
             import_measurements=import_measurements,
             import_project_details=import_project_details,
         )
-    except Exception:
-        stored_path.unlink(missing_ok=True)
-        raise
+    except DocumentImportError as exc:
+        if stored_path is not None:
+            stored_path.unlink(missing_ok=True)
+        raise DocumentImportError(
+            f"Could not import '{upload.filename}': {exc.message}",
+            status_code=exc.status_code,
+        ) from exc
+    except Exception as exc:
+        if stored_path is not None:
+            stored_path.unlink(missing_ok=True)
+        reason = str(exc) or exc.__class__.__name__
+        raise DocumentImportError(
+            f"Could not import '{upload.filename}': {reason}"
+        ) from exc
 
 
 def import_document_path(
@@ -168,3 +191,18 @@ def _persist_upload(upload: FileStorage, upload_dir: Path, suffix: str) -> Path:
     except OSError as exc:
         raise DocumentImportError(f"Could not save uploaded file: {exc}") from exc
     return target
+
+
+def _upload_size(upload: FileStorage) -> int:
+    try:
+        position = upload.stream.tell()
+        upload.stream.seek(0, 2)
+        size = upload.stream.tell()
+        upload.stream.seek(position)
+        return size
+    except (AttributeError, OSError, ValueError) as exc:
+        if upload.content_length is not None:
+            return upload.content_length
+        raise DocumentImportError(
+            f"Could not determine the size of '{upload.filename}': {exc}"
+        ) from exc
