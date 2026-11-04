@@ -105,8 +105,57 @@ def test_bad_uploads_get_a_clear_error_and_create_nothing(employee_client, tmp_p
 
     res = upload(employee_client, bad)
     assert res.status_code == status
-    assert res.get_json()["error"]
+    assert filename in res.get_json()["error"]
     assert Project.query.count() == 0
+    assert ProjectFile.query.count() == 0
+
+
+def test_oversized_upload_is_rejected_before_it_is_saved(
+    app, employee_client, tmp_path
+):
+    app.config["MAX_UPLOAD_SIZE"] = 10
+    bad = tmp_path / "too-large.csv"
+    bad.write_bytes(b"this file exceeds the configured limit")
+
+    res = upload(employee_client, bad)
+
+    assert res.status_code == 413
+    assert res.get_json()["error"] == (
+        "File 'too-large.csv' is too large "
+        f"({bad.stat().st_size} bytes; maximum is {app.config['MAX_UPLOAD_SIZE']} bytes)."
+    )
+    assert Project.query.count() == 0
+    assert ProjectFile.query.count() == 0
+    assert list(Path(app.config["UPLOAD_FOLDER"]).glob("*")) == []
+
+
+def test_failed_import_of_existing_project_saves_no_partial_data(
+    app, employee_client, tmp_path
+):
+    project = Project(name="Existing project")
+    db.session.add(project)
+    db.session.commit()
+    bad = tmp_path / "partial.csv"
+    bad.write_text("Style No,ST-NEW\nDescription,New description\n", encoding="utf-8")
+    upload_dir = Path(app.config["UPLOAD_FOLDER"])
+
+    res = upload(
+        employee_client,
+        bad,
+        url=f"/api/projects/{project.id}/import",
+    )
+
+    assert res.status_code == 400
+    assert "partial.csv" in res.get_json()["error"]
+    assert "No BOM rows" in res.get_json()["error"]
+    assert Project.query.count() == 1
+    db.session.refresh(project)
+    assert project.style_no is None
+    assert project.description is None
+    assert ProjectColor.query.count() == 0
+    assert ProjectMaterial.query.count() == 0
+    assert ProjectFile.query.count() == 0
+    assert list(upload_dir.glob("*")) == []
 
 
 def test_upload_without_a_file_is_rejected(employee_client):
