@@ -1,5 +1,3 @@
-
-Ci · YML
 name: CI
 on:
   pull_request:
