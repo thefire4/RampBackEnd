@@ -113,7 +113,7 @@ def test_bad_uploads_get_a_clear_error_and_create_nothing(employee_client, tmp_p
 def test_oversized_upload_is_rejected_before_it_is_saved(
     app, employee_client, tmp_path
 ):
-    app.config["MAX_UPLOAD_SIZE"] = 4
+    app.config["MAX_UPLOAD_SIZE"] = 100 * 1024 * 1024  # 100 MB
     bad = tmp_path / "too-large.csv"
     bad.write_bytes(b"this file exceeds the configured limit")
 
@@ -122,7 +122,7 @@ def test_oversized_upload_is_rejected_before_it_is_saved(
     assert res.status_code == 413
     assert res.get_json()["error"] == (
         "File 'too-large.csv' is too large "
-        f"({bad.stat().st_size} bytes; maximum is 4 bytes)."
+        f"({bad.stat().st_size} bytes; maximum is {app.config['MAX_UPLOAD_SIZE']} bytes)."
     )
     assert Project.query.count() == 0
     assert ProjectFile.query.count() == 0

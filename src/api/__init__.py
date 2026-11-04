@@ -19,7 +19,7 @@ def create_app(test_config=None):
             "mysql+mysqlconnector://root:password@127.0.0.1/RampCoreOs",
         ),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
-        MAX_UPLOAD_SIZE=25 * 1024 * 1024,
+        MAX_UPLOAD_SIZE=100 * 1024 * 1024,
 
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SECURE=False, #This is for development only!! Set to True when using in production
