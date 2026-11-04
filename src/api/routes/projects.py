@@ -352,49 +352,6 @@ def get_projects():
     }), 200
 
 
-@projects_bp.route("/projects/<int:project_id>", methods=["GET"])
-@login_required
-def get_project(project_id: int):
-    project = db.session.get(Project, project_id)
-    if project is None:
-        return jsonify({"error": "Project not found."}), 404
-
-    total, missing = _project_bom_counts(project_id)
-    project_payload = {
-        **_project_payload(project),
-        "stage": project.status,
-        "created_at": project.created_at.isoformat() if project.created_at else None,
-        **_completeness(total, missing),
-    }
-    return jsonify({
-        "project": project_payload,
-        "colorways": [
-            {
-                "id": colorway.id,
-                "name": colorway.name,
-                "materials": [
-                    _material_payload(material)
-                    for material in colorway.materials
-                ],
-            }
-            for colorway in project.colorways
-        ],
-        "files": [
-            {
-                "id": file.id,
-                "file_name": file.file_name,
-                "file_type": file.file_type,
-                "url": url_for(
-                    "projects.get_project_file",
-                    file_id=file.id,
-                ),
-                "created_at": file.created_at.isoformat() if file.created_at else None,
-            }
-            for file in project.files
-        ],
-    }), 200
-
-
 @projects_bp.route("/projects/<int:project_id>/images", methods=["GET"])
 @login_required
 def get_project_images(project_id: int):
@@ -475,19 +432,6 @@ def update_project(project_id: int):
             **_completeness(total, missing),
         }
     }), 200
-
-
-@projects_bp.route("/files/<int:file_id>", methods=["GET"])
-@login_required
-def get_project_file(file_id: int):
-    project_file = db.session.get(ProjectFile, file_id)
-    if project_file is None:
-        return jsonify({"error": "Project file not found."}), 404
-
-    return _serve_project_file(
-        project_file,
-        mimetypes.guess_type(project_file.file_name)[0],
-    )
 
 
 @projects_bp.route("/projects", methods=["POST"])

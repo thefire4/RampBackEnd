@@ -12,8 +12,10 @@ from src.api.routes.projects import (
     MATERIAL_FIELDS,
     MISSING_BOM_ITEM,
     REQUIRED_MATERIAL_FIELDS,
+    _completeness,
     _material_payload,
     _missing_bom_count,
+    _project_bom_counts,
     _upload_dir,
     project_source_payload,
 )
@@ -106,7 +108,11 @@ def get_project(project_id):
             material["fields"] = by_id[material["id"]]
 
     return jsonify({
-        "project": {**source_payload, **_project_payload(project)},
+        "project": {
+            **source_payload,
+            **_project_payload(project),
+            **_completeness(*_project_bom_counts(project.id)),
+        },
         "colorways": colorways,
         "files": [_file_payload(f) for f in sorted(project.files, key=lambda f: f.id)],
         "missing_bom_items": _missing_bom_count(project.id),
@@ -125,6 +131,7 @@ def _part_payload(material, sources):
     }
 
 
+@project_detail_bp.route("/projects/<int:project_id>/missing-items", methods=["GET"])
 @project_detail_bp.route("/projects/<int:project_id>/incomplete-materials", methods=["GET"])
 @login_required
 def get_missing_items(project_id):
