@@ -314,17 +314,53 @@ def _bom_line_response(material: ProjectMaterial, project_id: int):
 @login_required
 def get_projects():
     bom_counts = _bom_counts_query()
+    total_lines = func.coalesce(bom_counts.c.total, 0)
+    missing_lines = func.coalesce(bom_counts.c.missing, 0)
 
-    rows = (
+    query = (
         db.session.query(
             Project,
-            func.coalesce(bom_counts.c.total, 0),
-            func.coalesce(bom_counts.c.missing, 0),
+            total_lines,
+            missing_lines,
         )
         .outerjoin(bom_counts, bom_counts.c.project_id == Project.id)
-        .order_by(Project.created_at.desc(), Project.id.desc())
-        .all()
     )
+
+    search = request.args.get("search", "").strip()
+    if search:
+        escaped_search = (
+            search.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        search_pattern = f"%{escaped_search}%"
+        query = query.filter(or_(
+            Project.style_no.ilike(search_pattern, escape="\\"),
+            Project.description.ilike(search_pattern, escape="\\"),
+            Project.po_no.ilike(search_pattern, escape="\\"),
+        ))
+
+    stage = request.args.get("stage", "").strip()
+    if stage:
+        query = query.filter(func.lower(Project.status) == stage.lower())
+
+    division = request.args.get("division", "").strip()
+    if division:
+        query = query.filter(
+            func.lower(func.trim(Project.customer)) == division.lower()
+        )
+
+    complete = request.args.get("complete")
+    if complete is not None:
+        complete = complete.strip().lower()
+        if complete not in {"true", "false"}:
+            return jsonify({"error": "The complete filter must be true or false."}), 400
+        if complete == "true":
+            query = query.filter(total_lines > 0, missing_lines == 0)
+        else:
+            query = query.filter(or_(total_lines == 0, missing_lines > 0))
+
+    rows = query.order_by(Project.created_at.desc(), Project.id.desc()).all()
 
     return jsonify({
         "projects": [

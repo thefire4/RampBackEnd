@@ -105,6 +105,174 @@ def test_get_projects_returns_details_and_bom_completeness(client, app):
         assert empty["percent_complete"] == 0
 
 
+def test_get_projects_searches_style_description_and_po(client, app):
+    with app.app_context():
+        projects = [
+            Project(name="Style result", style_no="ST-SEARCH-1"),
+            Project(name="Description result", description="Searchable jacket"),
+            Project(name="PO result", po_no="PO-SEARCH-3"),
+            Project(name="No match", style_no="OTHER"),
+        ]
+        db.session.add_all(projects)
+        db.session.commit()
+        for search, expected_index in (
+            ("search-1", 0),
+            ("SEARCHABLE", 1),
+            ("search-3", 2),
+        ):
+            response = client.get("/api/projects", query_string={"search": search})
+            assert response.status_code == 200
+            assert {
+                row["id"] for row in response.get_json()["projects"]
+            } == {projects[expected_index].id}
+
+
+def test_get_projects_filters_by_stage_and_division(client, app):
+    with app.app_context():
+        projects = [
+            Project(name="Blocked A", status="blocked", customer="Division A"),
+            Project(name="Finished A", status="finished", customer="Division A"),
+            Project(name="Blocked B", status="blocked", customer="Division B"),
+        ]
+        db.session.add_all(projects)
+        db.session.commit()
+
+        stage_response = client.get(
+            "/api/projects", query_string={"stage": "BLOCKED"}
+        )
+        assert stage_response.status_code == 200
+        assert {
+            row["id"] for row in stage_response.get_json()["projects"]
+        } == {projects[0].id, projects[2].id}
+
+        division_response = client.get(
+            "/api/projects", query_string={"division": "division a"}
+        )
+        assert division_response.status_code == 200
+        assert {
+            row["id"] for row in division_response.get_json()["projects"]
+        } == {projects[0].id, projects[1].id}
+
+
+def test_get_projects_filters_by_bom_completeness(client, app):
+    with app.app_context():
+        complete = Project(name="Complete")
+        complete_colorway = ProjectColor(name="Navy", project=complete)
+        complete_colorway.materials.append(
+            ProjectMaterial(**_complete_material())
+        )
+
+        incomplete = Project(name="Incomplete")
+        incomplete_colorway = ProjectColor(name="Black", project=incomplete)
+        incomplete_colorway.materials.append(
+            ProjectMaterial(**_complete_material(supplier=""))
+        )
+        no_bom = Project(name="No BOM")
+        db.session.add_all([complete, incomplete, no_bom])
+        db.session.commit()
+
+        complete_response = client.get(
+            "/api/projects", query_string={"complete": "true"}
+        )
+        assert complete_response.status_code == 200
+        assert {
+            row["id"] for row in complete_response.get_json()["projects"]
+        } == {complete.id}
+
+        incomplete_response = client.get(
+            "/api/projects", query_string={"complete": "false"}
+        )
+        assert incomplete_response.status_code == 200
+        assert {
+            row["id"] for row in incomplete_response.get_json()["projects"]
+        } == {incomplete.id, no_bom.id}
+
+
+def test_get_projects_combines_search_and_filters_and_sorts_newest_first(client, app):
+    with app.app_context():
+        older_match = Project(
+            name="Older",
+            status="blocked",
+            customer="North",
+            style_no="JACKET-1",
+            created_at=datetime(2026, 1, 1),
+        )
+        older_colorway = ProjectColor(name="Navy", project=older_match)
+        older_colorway.materials.append(
+            ProjectMaterial(**_complete_material())
+        )
+
+        newer_match = Project(
+            name="Newer",
+            status="blocked",
+            customer="North",
+            description="Jacket for winter",
+            created_at=datetime(2026, 2, 1),
+        )
+        newer_colorway = ProjectColor(name="Black", project=newer_match)
+        newer_colorway.materials.append(
+            ProjectMaterial(**_complete_material())
+        )
+
+        excluded_stage = Project(
+            name="Wrong stage",
+            status="finished",
+            customer="North",
+            style_no="JACKET-3",
+        )
+        excluded_division = Project(
+            name="Wrong division",
+            status="blocked",
+            customer="South",
+            style_no="JACKET-4",
+        )
+        excluded_completeness = Project(
+            name="Incomplete match",
+            status="blocked",
+            customer="North",
+            po_no="JACKET-5",
+        )
+        incomplete_colorway = ProjectColor(
+            name="Red", project=excluded_completeness
+        )
+        incomplete_colorway.materials.append(
+            ProjectMaterial(**_complete_material(location=""))
+        )
+
+        db.session.add_all([
+            older_match,
+            newer_match,
+            excluded_stage,
+            excluded_division,
+            excluded_completeness,
+        ])
+        db.session.commit()
+
+        response = client.get(
+            "/api/projects",
+            query_string={
+                "search": "jacket",
+                "stage": "blocked",
+                "division": "North",
+                "complete": "true",
+            },
+        )
+
+        assert response.status_code == 200
+        assert [
+            row["id"] for row in response.get_json()["projects"]
+        ] == [newer_match.id, older_match.id]
+
+
+def test_get_projects_rejects_invalid_complete_filter(client):
+    response = client.get("/api/projects", query_string={"complete": "sometimes"})
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "The complete filter must be true or false."
+    }
+
+
 def test_get_project_returns_overview_and_bom_completeness(client, app):
     with app.app_context():
         project = Project(
