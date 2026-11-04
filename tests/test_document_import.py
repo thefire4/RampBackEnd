@@ -81,6 +81,11 @@ def test_duckworth_project_details_and_measurements(app):
 
         summary = import_document_path(DUCKWORTH_BOM, project=project, user_id=user.id)
 
+        from src.api.models import ValueSource
+        source = ValueSource.query.filter_by(project_id=project.id, entity_type="project", field="style_no").one()
+        assert source.file_name == DUCKWORTH_BOM.name
+        assert source.file_id == summary.file_record_id
+        assert source.kind == "file"
         assert project.style_no == "DW11038"
         assert project.customer == "DUCKWORTH"
         assert project.season == "FW26"

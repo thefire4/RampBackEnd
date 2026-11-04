@@ -3,6 +3,10 @@
 Start server with python run.py
 Server uses cors and CSRF tokens for security and cookies
 
+## Database setup
+
+Run `SQL_Setup.sql` in MySQL to create the database and tables. 
+
 ## BOM line API
 
 - `GET /api/projects` lists all projects with their style, description, stage,

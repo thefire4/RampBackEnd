@@ -92,6 +92,7 @@ def import_measurements_from_file(path: Path, project: Project) -> MeasurementIm
                 grade=grade,
                 notes=notes,
             )
+            point._source_row = row_number
             db.session.add(point)
             created += 1
 

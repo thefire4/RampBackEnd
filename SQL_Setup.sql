@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(20) NOT NULL UNIQUE,
     email VARCHAR(100) NOT NULL UNIQUE,
     password VARCHAR(255) NOT NULL,
-    tier ENUM('admin', 'standard') NOT NULL DEFAULT 'standard';
+    tier ENUM('admin', 'standard') NOT NULL DEFAULT 'standard',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -119,6 +119,29 @@ CREATE TABLE IF NOT EXISTS files (
     FOREIGN KEY (user_id)
         REFERENCES users(id)
         ON DELETE CASCADE
+);
+
+-- Current source of each project detail, BOM value, or measurement value either user, file or unknown.
+CREATE TABLE IF NOT EXISTS value_sources (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    project_id INT NOT NULL,
+    entity_type VARCHAR(30) NOT NULL,
+    entity_id INT NOT NULL,
+    `field` VARCHAR(50) NOT NULL,
+    kind VARCHAR(20) NOT NULL,
+    file_id INT NULL,
+    file_name VARCHAR(255),
+    sheet VARCHAR(255),
+    `row` INT NULL,
+    user_id INT NULL,
+
+    CONSTRAINT uq_value_source
+        UNIQUE (project_id, entity_type, entity_id, `field`),
+    INDEX ix_value_sources_project_id (project_id),
+
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (file_id) REFERENCES files(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
 -- Project comments, optionally linked to a file
