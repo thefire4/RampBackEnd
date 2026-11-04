@@ -113,7 +113,7 @@ def test_bad_uploads_get_a_clear_error_and_create_nothing(employee_client, tmp_p
 def test_oversized_upload_is_rejected_before_it_is_saved(
     app, employee_client, tmp_path
 ):
-    app.config["MAX_UPLOAD_SIZE"] = 100 * 1024 * 1024  # 100 MB
+    app.config["MAX_UPLOAD_SIZE"] = 10
     bad = tmp_path / "too-large.csv"
     bad.write_bytes(b"this file exceeds the configured limit")
 
