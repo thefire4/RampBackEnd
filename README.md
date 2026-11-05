@@ -77,3 +77,11 @@ For console-only BOM comparisons, run
 Readable results are displayed without extra options or report files. Differences
 are informational, and there are no extra comparison options.
 See `tests/HAND_COUNTS.md` for details.
+
+## Upload and saved BOM value tests
+
+Run `./venv/bin/python -m pytest tests/test_bom_upload_values.py` to upload each
+sample from `files/` and print every committed BOM line for visual review.
+No expected-value JSON or report files are needed. Tests verify upload and
+persistence, then clean up test projects and uploaded copies. See
+`tests/BOM_UPLOAD_VALUES.md` for output details.
