@@ -10,13 +10,18 @@ from src.api.extensions import db
 from src.api.models import Project, ProjectColor, ProjectMaterial
 from src.api.services.import_errors import DocumentImportError
 from src.api.services.spreadsheet_utils import (
-    cell_text,
+    cell_text as spreadsheet_cell_text,
     find_header_row,
     load_sheet_rows,
     parse_quantity,
     pick_sheet_names,
     row_has_content,
 )
+
+
+def _bom_cell_text(value):
+    text = spreadsheet_cell_text(value)
+    return None if text is not None and text.casefold() in {'n/a', 'tbd'} else text
 
 
 @dataclass
@@ -45,6 +50,7 @@ def import_bom_from_file(
                 last_error = f"No BOM header row found in sheet '{sheet_name}'."
                 continue
             header_row_number, field_map, raw_headers = header
+            field_map = _resolve_section_fields(field_map, raw_headers)
             color_columns = _detect_colorway_columns(raw_headers, field_map)
             if color_columns:
                 return _import_wide_bom(
@@ -86,6 +92,33 @@ def _detect_colorway_columns(
     return columns
 
 
+def _resolve_section_fields(field_map, raw_headers):
+    """Symbol-based packs put part names beside a separate material-content column."""
+    headers = {column: normalize_header(value) for column, value in raw_headers.items()}
+    if any('symbol' in value for value in headers.values()) and 'content' in headers.values():
+        field_map = dict(field_map)
+        for column, value in headers.items():
+            if value in {'fabric', 'trims', 'thread', 'labels & packaging', 'labels & packaging:'}:
+                field_map[column] = 'name'
+    return field_map
+
+
+def _is_repeated_header(row, field_map):
+    matches = sum(
+        match_bom_field(_bom_cell_text(row[column]) or '') == field
+        for column, field in field_map.items() if column < len(row)
+    )
+    return matches >= 3
+
+
+def _is_instruction_section(row, field_map):
+    payload = _build_row_payload(row, field_map)
+    label = normalize_header(payload.get('name'))
+    return label in {'general', 'general instructions', 'construction notes', 'instructions'} and not any(
+        payload.get(field) for field in ('material', 'supplier', 'article_no', 'quantity', 'material_size', 'uom')
+    )
+
+
 def _get_or_create_colorway(project: Project, name: str) -> tuple[ProjectColor, bool]:
     normalized = name.strip()
     existing = ProjectColor.query.filter_by(
@@ -108,13 +141,20 @@ def _build_row_payload(
     for col_index, canonical in field_map.items():
         if col_index >= len(row):
             continue
-        value = cell_text(row[col_index])
+        value = _bom_cell_text(row[col_index])
         if value is None:
             continue
         if canonical == "quantity":
             payload[canonical] = parse_quantity(row[col_index])
+        elif canonical == "name" and payload.get("name"):
+            continue
         else:
             payload[canonical] = value
+    # A missing UOM column uses the measured size; an explicit blank UOM stays blank.
+    if "uom" not in field_map.values() and payload.get("material_size") is not None:
+        payload["uom"] = payload["material_size"]
+    if "supplier_contact" not in field_map.values() and payload.get("supplier") is not None:
+        payload["supplier_contact"] = payload["supplier"]
     return payload
 
 
@@ -211,18 +251,22 @@ def _import_wide_bom(
             continue
         if not row_has_content(row):
             continue
-        name = cell_text(row[0]) if row else None
+        if _is_instruction_section(row, field_map):
+            break
+        if _is_repeated_header(row, field_map):
+            continue
+        base_payload = _build_row_payload(row, field_map)
+        name = base_payload.get('name')
         if _should_skip_bom_row(name):
             result.skipped_rows.append(row_number)
             continue
 
-        base_payload = _build_row_payload(row, field_map)
         if not base_payload.get("name"):
             base_payload["name"] = name
         result.rows_processed += 1
 
         for col_index, colorway_name in color_columns:
-            color_value = cell_text(row[col_index]) if col_index < len(row) else None
+            color_value = _bom_cell_text(row[col_index]) if col_index < len(row) else None
             if colorway_name not in colorway_cache:
                 colorway, created = _get_or_create_colorway(project, colorway_name)
                 colorway_cache[colorway_name] = colorway
@@ -232,7 +276,7 @@ def _import_wide_bom(
                 colorway = colorway_cache[colorway_name]
 
             payload = dict(base_payload)
-            payload["color"] = color_value or colorway_name
+            payload["color"] = color_value
             _create_material(
                 colorway,
                 payload,
@@ -267,9 +311,13 @@ def _import_long_bom(
             continue
         if not row_has_content(row):
             continue
+        if _is_instruction_section(row, field_map):
+            break
+        if _is_repeated_header(row, field_map):
+            continue
 
         base_payload = _build_row_payload(row, field_map)
-        name = base_payload.get("name") or (cell_text(row[0]) if row else None)
+        name = base_payload.get("name") or (_bom_cell_text(row[0]) if row else None)
         if _should_skip_bom_row(name):
             result.skipped_rows.append(row_number)
             continue
@@ -291,7 +339,7 @@ def _import_long_bom(
             )
             if col_index is None or col_index >= len(row):
                 continue
-            value = cell_text(row[col_index])
+            value = _bom_cell_text(row[col_index])
             if value:
                 row_colors.append((color_header, value))
 
@@ -308,7 +356,7 @@ def _import_long_bom(
                 colorway = colorway_cache[colorway_name]
 
             payload = dict(base_payload)
-            payload["color"] = color_value or colorway_name
+            payload["color"] = color_value
             _create_material(
                 colorway,
                 payload,

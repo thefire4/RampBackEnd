@@ -53,9 +53,10 @@ def test_duckworth_bom_import(app):
         assert summary.bom is not None
         assert summary.bom.sheet_name == "BILL OF MATERIALS"
         assert summary.bom.rows_processed == 13
-        assert summary.bom.materials_created == 39
-        assert summary.bom.colorways_created == 3
-        assert ProjectMaterial.query.count() == 39
+        # Hidden CHARCOAL is excluded: 13 visible BOM rows x 2 visible colorways.
+        assert summary.bom.materials_created == 26
+        assert summary.bom.colorways_created == 2
+        assert ProjectMaterial.query.count() == 26
 
         snap = ProjectMaterial.query.filter_by(name="Snap").first()
         assert snap is not None
@@ -92,8 +93,9 @@ def test_duckworth_project_details_and_measurements(app):
         assert project.po_no == "1654"
         assert summary.measurements is not None
         assert summary.measurements.sheet_name == "SPEC"
-        assert summary.measurements.points_created == 205
-        assert PointsMeasured.query.count() == 205
+        # SPEC rows 16 and 17 are hidden: omit their 10 size measurements.
+        assert summary.measurements.points_created == 195
+        assert PointsMeasured.query.count() == 195
 
 
 def test_project_missing_bom_count_checks_required_material_fields(app):

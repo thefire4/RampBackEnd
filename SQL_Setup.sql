@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS project_materials (
     location VARCHAR(1000),
     article_no VARCHAR(100),
     material_size VARCHAR(50),
-    uom VARCHAR(10),
+    uom VARCHAR(50),
     color VARCHAR(50),
     notes TEXT,
     import_source_file VARCHAR(255),
