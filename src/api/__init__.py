@@ -39,7 +39,7 @@ def create_app(test_config=None):
     
     CORS(
         app,
-        origins=["http://localhost:5173"], # For development only, need to change to actual URL once in production
+        origins=os.environ.get("FRONTEND_URL", "http://localhost:5173"),
         supports_credentials=True,
     )
 
