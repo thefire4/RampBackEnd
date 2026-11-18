@@ -110,6 +110,9 @@ CREATE TABLE IF NOT EXISTS files (
     file_name VARCHAR(255) NOT NULL,
     file_path VARCHAR(500),
     file_type VARCHAR(50),
+    source_sheet VARCHAR(255),
+    source_file_id INT NULL,
+    FOREIGN KEY (source_file_id) REFERENCES files(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     FOREIGN KEY (project_id)

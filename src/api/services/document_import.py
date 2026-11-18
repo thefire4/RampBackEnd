@@ -12,6 +12,7 @@ from werkzeug.utils import secure_filename
 from src.api.extensions import db
 from src.api.models import Project, ProjectFile, ProjectMaterial, PointsMeasured
 from src.api.services.provenance import record_source, MATERIAL_FIELDS, MEASUREMENT_FIELDS
+from src.api.services.excel_images import extract_excel_images
 from src.api.services.bom_import import BomImportResult, import_bom_from_file
 from src.api.services.import_errors import DocumentImportError
 from src.api.services.measurements_import import (
@@ -31,6 +32,9 @@ class DocumentImportSummary:
     bom: Optional[BomImportResult] = None
     measurements: Optional[MeasurementImportResult] = None
     file_record_id: Optional[int] = None
+    images_created: int = 0
+    images_skipped: int = 0
+    image_warnings: list[str] = field(default_factory=list)
 
 
 def import_uploaded_document(
@@ -71,6 +75,7 @@ def import_uploaded_document(
             project=project,
             user_id=user_id,
             original_filename=upload.filename,
+            image_dir=upload_dir / "images",
             import_bom=import_bom,
             import_measurements=import_measurements,
             import_project_details=import_project_details,
@@ -121,6 +126,7 @@ def _import_saved_file(
     import_bom: bool,
     import_measurements: bool,
     import_project_details: bool,
+    image_dir: Optional[Path] = None,
 ) -> DocumentImportSummary:
     file_name = original_filename
     old_materials = {m.id for c in project.colorways for m in c.materials}
@@ -176,7 +182,34 @@ def _import_saved_file(
             if getattr(point, field) is not None:
                 record_source(project.id, "measurement", point.id, field, kind="file", file=file_record,
                               sheet=summary.measurements.sheet_name, row=getattr(point, "_source_row", None))
-    db.session.commit()
+    image_paths = []
+    try:
+        extraction = extract_excel_images(path)
+        summary.images_skipped = extraction.skipped
+        summary.image_warnings = extraction.warnings
+        if extraction.images:
+            if image_dir is None:
+                root = Path(current_app.config.get("UPLOAD_FOLDER", "uploads"))
+                if not root.is_absolute():
+                    root = Path(current_app.root_path).parent / root
+                image_dir = root / "images"
+            image_dir.mkdir(parents=True, exist_ok=True)
+        for index, image in enumerate(extraction.images, 1):
+            target = image_dir / (uuid.uuid4().hex + image.extension)
+            image_paths.append(target)
+            target.write_bytes(image.data)
+            db.session.add(ProjectFile(
+                project=project, user_id=user_id,
+                file_name=f"{secure_filename(image.sheet) or 'sheet'}_{index}{image.extension}",
+                file_path=str(target.resolve()), file_type=image.mimetype,
+                source_sheet=image.sheet, source_file_id=file_record.id,
+            ))
+            summary.images_created += 1
+        db.session.commit()
+    except Exception:
+        for target in image_paths:
+            target.unlink(missing_ok=True)
+        raise
     summary.file_record_id = file_record.id
     return summary
 

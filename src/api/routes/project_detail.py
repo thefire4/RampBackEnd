@@ -77,6 +77,8 @@ def _file_payload(file):
         "id": file.id,
         "file_name": file.file_name,
         "file_type": file.file_type,
+        "source_sheet": file.source_sheet,
+        "source_file_id": file.source_file_id,
         "url": f"/api/files/{file.id}",
         "created_at": _iso(getattr(file, "created_at", None)),
     }
