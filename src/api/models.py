@@ -36,6 +36,7 @@ class Project(db.Model):
     weight = db.Column(db.String(100))
     description = db.Column(db.String(1000))
     created_at = db.Column(db.DateTime, server_default=db.func.now())
+    archived = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
 
     colorways = db.relationship(
         "ProjectColor",

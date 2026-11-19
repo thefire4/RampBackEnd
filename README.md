@@ -11,7 +11,14 @@ Run `SQL_Setup.sql` in MySQL to create the database and tables.
 
 - `GET /api/projects` lists all projects with their style, description, stage,
   PO number, project date, total and missing BOM line counts, and integer
-  completion percentage.
+  completion percentage. Archived projects are hidden by default; pass
+  `archived=true` to list archived projects.
+- `POST /api/projects/<project_id>/archive` archives a project, and
+  `POST /api/projects/<project_id>/restore` restores it.
+- Admins can `DELETE /api/projects/<project_id>` to remove the project and its
+  related data and stored files, or
+  `DELETE /api/projects/<project_id>/files/<file_id>` to remove one file and its
+  source references.
 - `GET /api/projects/<project_id>` returns one project's overview, colorways,
   BOM lines, files, and the same completeness counts. Projects with no BOM
   lines report `0` percent complete.
@@ -33,6 +40,6 @@ Run `SQL_Setup.sql` in MySQL to create the database and tables.
 Quantities must be finite numbers greater than or equal to zero. Whitespace-only
 values are rejected for required material fields. Each successful create, edit, or
 delete records old and new values in `project_change_log` and returns the updated
-`missing_bom_items` count. For an existing database, run
-`migrations/001_bom_line_audit.sql`; for a fresh database, use the updated
-`SQL_Setup.sql`.
+`missing_bom_items` count. For an existing database, apply
+`migrations/001_bom_line_audit.sql` and `migrations/003_project_archiving.sql`
+if they have not already been applied. For a fresh database, use `SQL_Setup.sql`.
