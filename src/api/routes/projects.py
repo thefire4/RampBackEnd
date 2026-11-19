@@ -11,7 +11,7 @@ from sqlalchemy import MetaData, Table, inspect
 
 from src.api.extensions import db
 
-from src.api.models import Project, ProjectChangeLog, ProjectColor, ProjectMaterial, ProjectFile, PointsMeasured, ValueSource, User
+from src.api.models import Project, ProjectChangeLog, ProjectColor, ProjectMaterial, ProjectFile, PointsMeasured, ValueSource, User, Vendor
 from src.api.decorators import admin_required
 from src.api.services.provenance import PROJECT_FIELDS, MATERIAL_FIELDS, MEASUREMENT_FIELDS, record_source, serialize_values
 
@@ -37,7 +37,7 @@ MISSING_BOM_ITEM = or_(
     ProjectMaterial.quantity.is_(None) | (ProjectMaterial.quantity <= 0),
 )
 
-EDITABLE_MATERIAL_FIELDS = set(MATERIAL_FIELDS)
+EDITABLE_MATERIAL_FIELDS = set(MATERIAL_FIELDS) | {"vendor_id"}
 REQUIRED_MATERIAL_FIELDS = {
     "material",
     "supplier",
@@ -184,6 +184,7 @@ def _material_payload(material: ProjectMaterial) -> dict:
     return {
         "id": material.id,
         "colorway_id": material.colorway_id,
+        "vendor_id": material.vendor_id,
         "name": material.name,
         "material": material.material,
         "supplier": material.supplier,
@@ -251,6 +252,15 @@ def _validate_material_changes(
 
     normalized = {}
     for field, value in changes.items():
+        if field == "vendor_id":
+            if value is None:
+                normalized[field] = None
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                return None, "Vendor ID must be an integer or null."
+            normalized[field] = value
+            continue
+
         if field == "quantity":
             if value is None:
                 normalized[field] = None
@@ -673,12 +683,17 @@ def update_material(material_id: int):
     normalized, error = _validate_material_changes(changes)
     if error:
         return jsonify({"error": error}), 400
+    if normalized.get("vendor_id") is not None and db.session.get(
+        Vendor, normalized["vendor_id"]
+    ) is None:
+        return jsonify({"error": "Vendor not found."}), 404
 
     old_values = {field: getattr(material, field) for field in normalized}
     project_id = material.colorway.project_id
     for field, value in normalized.items():
         setattr(material, field, value)
-        record_source(project_id, "material", material.id, field, kind="manual", user_id=current_user.id)
+        if field in MATERIAL_FIELDS:
+            record_source(project_id, "material", material.id, field, kind="manual", user_id=current_user.id)
     db.session.add_all(_change_entries(
         project_id=project_id,
         user_id=current_user.id,
@@ -720,12 +735,17 @@ def create_bom_line(project_id: int):
     normalized, error = _validate_material_changes(body)
     if error:
         return jsonify({"error": error}), 400
+    if normalized.get("vendor_id") is not None and db.session.get(
+        Vendor, normalized["vendor_id"]
+    ) is None:
+        return jsonify({"error": "Vendor not found."}), 404
 
     material = ProjectMaterial(colorway=colorway, **normalized)
     db.session.add(material)
     db.session.flush()
     for field in normalized:
-        record_source(project_id, "material", material.id, field, kind="manual", user_id=current_user.id)
+        if field in MATERIAL_FIELDS:
+            record_source(project_id, "material", material.id, field, kind="manual", user_id=current_user.id)
     db.session.add_all(_change_entries(
         project_id=project_id,
         user_id=current_user.id,
@@ -944,16 +964,22 @@ def update_values(project_id, material_id=None, point_id=None):
     if entity is None:
         return jsonify(error="Value record not found."), 404
     data = request.get_json(silent=True)
-    if not isinstance(data, dict) or not data or any(k not in fields for k in data):
+    allowed_fields = set(fields) | {"vendor_id"} if kind == "material" else fields
+    if not isinstance(data, dict) or not data or any(k not in allowed_fields for k in data):
         return jsonify(error="Provide supported fields to update."), 400
     if kind == "material":
         normalized, error = _validate_material_changes(data)
         if error:
             return jsonify(error=error), 400
+        if normalized.get("vendor_id") is not None and db.session.get(
+            Vendor, normalized["vendor_id"]
+        ) is None:
+            return jsonify(error="Vendor not found."), 404
         old_values = {field: getattr(entity, field) for field in normalized}
         for field, value in normalized.items():
             setattr(entity, field, value)
-            record_source(project_id, kind, entity.id, field, kind="manual", user_id=current_user.id)
+            if field in MATERIAL_FIELDS:
+                record_source(project_id, kind, entity.id, field, kind="manual", user_id=current_user.id)
         db.session.add_all(_change_entries(project_id=project_id, user_id=current_user.id,
                            action="updated", material_id=entity.id, values=normalized, old_values=old_values))
         db.session.commit()

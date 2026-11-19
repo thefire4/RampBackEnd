@@ -61,10 +61,21 @@ CREATE TABLE IF NOT EXISTS project_colors (
         ON DELETE CASCADE
 );
 
+-- Vendors associated with BOM lines
+CREATE TABLE IF NOT EXISTS vendors (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    contact_name VARCHAR(255),
+    email VARCHAR(255),
+    phone VARCHAR(50),
+    notes TEXT
+);
+
 -- Materials associated with each colorway
 CREATE TABLE IF NOT EXISTS project_materials (
     id INT AUTO_INCREMENT PRIMARY KEY,
     colorway_id INT NOT NULL,
+    vendor_id INT NULL,
     name VARCHAR(50),
     material VARCHAR(100),
     supplier VARCHAR(100),
@@ -83,7 +94,11 @@ CREATE TABLE IF NOT EXISTS project_materials (
 
     FOREIGN KEY (colorway_id)
         REFERENCES project_colors(id)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (vendor_id)
+        REFERENCES vendors(id)
+        ON DELETE SET NULL
 );
 
 -- Project measurement points

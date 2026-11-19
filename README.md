@@ -36,10 +36,19 @@ Run `SQL_Setup.sql` in MySQL to create the database and tables.
 - `DELETE /api/bom-lines/<line_id>` deletes a line.
 - `GET /api/projects/<project_id>/history` returns field-level change-log entries,
   including the user and timestamp.
+- `GET /api/vendors` lists vendors; `POST /api/vendors` creates one with a
+  required `name` and optional `contact_name`, `email`, `phone`, and `notes`.
+- `GET /api/vendors/<vendor_id>` retrieves a vendor,
+  `PATCH /api/vendors/<vendor_id>` edits supplied fields, and
+  `DELETE /api/vendors/<vendor_id>` removes it and unlinks its BOM lines.
+- `GET /api/vendors/<vendor_id>/bom-lines` lists the vendor's BOM lines with
+  project and colorway context. BOM line create/edit endpoints accept a nullable
+  `vendor_id`; the legacy `supplier` text remains available independently.
 
 Quantities must be finite numbers greater than or equal to zero. Whitespace-only
 values are rejected for required material fields. Each successful create, edit, or
 delete records old and new values in `project_change_log` and returns the updated
 `missing_bom_items` count. For an existing database, apply
-`migrations/001_bom_line_audit.sql` and `migrations/003_project_archiving.sql`
-if they have not already been applied. For a fresh database, use `SQL_Setup.sql`.
+`migrations/001_bom_line_audit.sql`, `migrations/003_project_archiving.sql`, and
+`migrations/004_vendors.sql` if they have not already been applied. For a fresh
+database, use `SQL_Setup.sql`.
