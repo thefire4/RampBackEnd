@@ -44,11 +44,17 @@ Run `SQL_Setup.sql` in MySQL to create the database and tables.
 - `GET /api/vendors/<vendor_id>/bom-lines` lists the vendor's BOM lines with
   project and colorway context. BOM line create/edit endpoints accept a nullable
   `vendor_id`; the legacy `supplier` text remains available independently.
+- `POST /api/projects/<project_id>/tasks` creates a task for an incomplete BOM
+  line; `GET /api/projects/<project_id>/tasks` lists the project's tasks.
+  `PATCH /api/tasks/<task_id>` updates `owner_id`, `status` (`open`,
+  `in progress`, or `done`), and/or `due_date` (`YYYY-MM-DD` or null).
+  BOM imports create tasks for incomplete lines, and completing a line
+  automatically closes its task.
 
 Quantities must be finite numbers greater than or equal to zero. Whitespace-only
 values are rejected for required material fields. Each successful create, edit, or
 delete records old and new values in `project_change_log` and returns the updated
 `missing_bom_items` count. For an existing database, apply
 `migrations/001_bom_line_audit.sql`, `migrations/003_project_archiving.sql`, and
-`migrations/004_vendors.sql` if they have not already been applied. For a fresh
-database, use `SQL_Setup.sql`.
+`migrations/004_vendors.sql`, and `migrations/005_tasks.sql` if they have not
+already been applied. For a fresh database, use `SQL_Setup.sql`.

@@ -19,6 +19,7 @@ from src.api.services.measurements_import import (
     MeasurementImportResult,
     import_measurements_from_file,
 )
+from src.api.services.tasks import sync_project_tasks
 from src.api.services.tech_pack_import import (
     apply_project_details,
     extract_project_details_from_file,
@@ -205,6 +206,7 @@ def _import_saved_file(
                 source_sheet=image.sheet, source_file_id=file_record.id,
             ))
             summary.images_created += 1
+        sync_project_tasks(project.id)
         db.session.commit()
     except Exception:
         for target in image_paths:
