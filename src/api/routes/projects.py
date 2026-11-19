@@ -9,6 +9,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import case, func, or_
 
 from src.api.extensions import db
+from src.api.lib.material_fields import SOURCING_STATUSES
 
 from src.api.models import Project, ProjectChangeLog, ProjectColor, ProjectMaterial, ProjectFile, PointsMeasured, ValueSource, User
 from src.api.services.provenance import PROJECT_FIELDS, MATERIAL_FIELDS, MEASUREMENT_FIELDS, record_source, serialize_values
@@ -55,6 +56,8 @@ MATERIAL_FIELD_LENGTHS = {
     "material_size": 50,
     "uom": 50,
     "color": 50,
+    "supplied_by": 255,
+    "approvals_needed": 1000,
 }
 PROJECT_FIELDS = {
     "name": 100,
@@ -193,6 +196,10 @@ def _material_payload(material: ProjectMaterial) -> dict:
         "uom": material.uom,
         "color": material.color,
         "notes": material.notes,
+        "supplied_by": material.supplied_by,
+        "required_arrival": material.required_arrival.isoformat() if material.required_arrival else None,
+        "sourcing_status": material.sourcing_status,
+        "approvals_needed": material.approvals_needed,
     }
 
 
@@ -249,6 +256,27 @@ def _validate_material_changes(
 
     normalized = {}
     for field, value in changes.items():
+        if field == "required_arrival":
+            if value is None or isinstance(value, str) and not value.strip():
+                normalized[field] = None
+                continue
+            if not isinstance(value, str):
+                return None, "required_arrival must be a date in YYYY-MM-DD format or null."
+            try:
+                parsed = date.fromisoformat(value)
+                if parsed.isoformat() != value:
+                    raise ValueError
+            except ValueError:
+                return None, "required_arrival must be a valid date in YYYY-MM-DD format."
+            normalized[field] = parsed
+            continue
+        if field == "sourcing_status":
+            if isinstance(value, str):
+                value = value.strip() or None
+            if value is not None and value not in SOURCING_STATUSES:
+                return None, f"sourcing_status must be one of: {', '.join(SOURCING_STATUSES)}, or null."
+            normalized[field] = value
+            continue
         if field == "quantity":
             if value is None:
                 normalized[field] = None
