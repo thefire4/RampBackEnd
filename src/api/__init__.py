@@ -54,6 +54,7 @@ def create_app(test_config=None):
     from src.api.routes.account import account_bp
     from src.api.routes.projects import projects_bp
     from src.api.routes.project_detail import project_detail_bp
+    from src.api.routes.vendors import vendors_bp
 
     app.config.setdefault("UPLOAD_FOLDER", "uploads")
 
@@ -63,6 +64,7 @@ def create_app(test_config=None):
     app.register_blueprint(account_bp, url_prefix="/api")
     app.register_blueprint(projects_bp, url_prefix="/api")
     app.register_blueprint(project_detail_bp, url_prefix="/api")
+    app.register_blueprint(vendors_bp, url_prefix="/api")
 
     
     return app

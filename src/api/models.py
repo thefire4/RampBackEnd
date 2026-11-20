@@ -70,6 +70,19 @@ class ProjectColor(db.Model):
     )
 
 
+class Vendor(db.Model):
+    __tablename__ = "vendors"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    contact_name = db.Column(db.String(255))
+    email = db.Column(db.String(255))
+    phone = db.Column(db.String(50))
+    notes = db.Column(db.Text)
+
+    bom_lines = db.relationship("ProjectMaterial", back_populates="vendor")
+
+
 class ProjectMaterial(db.Model):
     __tablename__ = "project_materials"
 
@@ -78,6 +91,11 @@ class ProjectMaterial(db.Model):
         db.Integer,
         db.ForeignKey("project_colors.id", ondelete="CASCADE"),
         nullable=False
+    )
+    vendor_id = db.Column(
+        db.Integer,
+        db.ForeignKey("vendors.id", ondelete="SET NULL"),
+        nullable=True,
     )
     name = db.Column(db.String(50))
     material = db.Column(db.String(100))
@@ -95,6 +113,7 @@ class ProjectMaterial(db.Model):
     import_field_sources = db.Column(db.Text)
 
     colorway = db.relationship("ProjectColor", back_populates="materials")
+    vendor = db.relationship("Vendor", back_populates="bom_lines")
 
 
 class ProjectChangeLog(db.Model):
