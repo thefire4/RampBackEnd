@@ -3,7 +3,7 @@ from src.api.extensions import db
 from src.api.models import ValueSource
 
 PROJECT_FIELDS = ("name", "status", "style_no", "po_no", "project_date", "customer", "size_range", "season", "fabric_yarn", "designer", "weight", "description")
-MATERIAL_FIELDS = ("name", "material", "supplier", "supplier_contact", "quantity", "location", "article_no", "material_size", "uom", "color", "notes")
+MATERIAL_FIELDS = ("name", "material", "supplier", "supplier_contact", "quantity", "location", "article_no", "material_size", "uom", "color", "notes", "supplied_by", "required_arrival", "sourcing_status", "approvals_needed")
 MEASUREMENT_FIELDS = ("code", "name", "tol", "sizes", "measure", "grade", "notes")
 
 

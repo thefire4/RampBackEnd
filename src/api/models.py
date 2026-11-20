@@ -3,6 +3,7 @@ from datetime import date
 from flask_login import UserMixin
 from sqlalchemy import CheckConstraint
 from .extensions import db, login_manager
+from .lib.material_fields import SOURCING_STATUSES
 
 
 class User(UserMixin, db.Model):
@@ -109,6 +110,10 @@ class ProjectMaterial(db.Model):
     uom = db.Column(db.String(50))
     color = db.Column(db.String(50))
     notes = db.Column(db.Text)
+    supplied_by = db.Column(db.String(255))
+    required_arrival = db.Column(db.Date)
+    sourcing_status = db.Column(db.Enum(*SOURCING_STATUSES, name="bom_sourcing_status", create_constraint=True))
+    approvals_needed = db.Column(db.Text)
     import_source_file = db.Column(db.String(255))
     import_source_row = db.Column(db.Integer)
     import_field_sources = db.Column(db.Text)

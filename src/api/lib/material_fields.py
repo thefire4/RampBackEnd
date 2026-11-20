@@ -6,6 +6,8 @@ import re
 from typing import Optional
 
 # Canonical field -> header text variants (normalized before match).
+SOURCING_STATUSES = ("awaiting", "delayed", "in stock")
+
 BOM_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "name": (
         "item",
