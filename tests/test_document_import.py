@@ -23,7 +23,7 @@ DUCKWORTH_BOM = FILES_DIR / "DW11038_M's Snowcrest_Shirt Jac_ REV2 BTUSA PO 1654
 
 
 @pytest.fixture
-def app():
+def app(tmp_path):
     from src.api import create_app
 
     application = create_app(
@@ -31,6 +31,7 @@ def app():
             "TESTING": True,
             "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
             "WTF_CSRF_ENABLED": False,
+            "UPLOAD_FOLDER": str(tmp_path / "uploads"),
         }
     )
     with application.app_context():

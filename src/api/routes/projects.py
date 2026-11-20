@@ -409,6 +409,8 @@ def get_project_images(project_id: int):
         image_payloads.append({
             "id": image.id,
             "file_name": image.file_name,
+            "source_sheet": image.source_sheet,
+            "source_file_id": image.source_file_id,
             "file_type": mimetype,
             "uploaded_at": image.created_at.isoformat() if image.created_at else None,
             "url": url_for(
@@ -709,6 +711,9 @@ def _summary_payload(summary) -> dict:
         "project_id": summary.project_id,
         "project_fields_updated": summary.project_fields_updated,
         "file_id": summary.file_record_id,
+        "images_created": summary.images_created,
+        "images_skipped": summary.images_skipped,
+        "image_warnings": summary.image_warnings,
         "missing_bom_items": _missing_bom_count(summary.project_id),
     }
     if summary.bom:

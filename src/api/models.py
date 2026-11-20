@@ -138,6 +138,8 @@ class ProjectFile(db.Model):
     file_name = db.Column(db.String(255), nullable=False)
     file_path = db.Column(db.String(500))
     file_type = db.Column(db.String(50))
+    source_sheet = db.Column(db.String(255))
+    source_file_id = db.Column(db.Integer, db.ForeignKey("files.id", ondelete="SET NULL"))
     created_at = db.Column(db.DateTime, server_default=db.func.now())
 
     project = db.relationship("Project", back_populates="files")

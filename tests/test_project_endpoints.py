@@ -438,6 +438,8 @@ def test_get_project_images_lists_only_images_with_metadata(client, app, tmp_pat
         assert images == [{
             "id": image_id,
             "file_name": "front.jpg",
+            "source_sheet": None,
+            "source_file_id": None,
             "file_type": "image/jpeg",
             "uploaded_at": "2026-10-30T12:00:00",
             "url": f"/api/projects/{project_id}/images/{image_id}",
