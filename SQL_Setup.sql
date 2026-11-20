@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS projects (
     designer VARCHAR(100),
     weight VARCHAR(100),
     description VARCHAR(1000),
+    archived BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -60,10 +61,21 @@ CREATE TABLE IF NOT EXISTS project_colors (
         ON DELETE CASCADE
 );
 
+-- Vendors associated with BOM lines
+CREATE TABLE IF NOT EXISTS vendors (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    contact_name VARCHAR(255),
+    email VARCHAR(255),
+    phone VARCHAR(50),
+    notes TEXT
+);
+
 -- Materials associated with each colorway
 CREATE TABLE IF NOT EXISTS project_materials (
     id INT AUTO_INCREMENT PRIMARY KEY,
     colorway_id INT NOT NULL,
+    vendor_id INT NULL,
     name VARCHAR(50),
     material VARCHAR(100),
     supplier VARCHAR(100),
@@ -86,7 +98,36 @@ CREATE TABLE IF NOT EXISTS project_materials (
 
     FOREIGN KEY (colorway_id)
         REFERENCES project_colors(id)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (vendor_id)
+        REFERENCES vendors(id)
+        ON DELETE SET NULL
+);
+
+-- Follow-up tasks for incomplete BOM lines
+CREATE TABLE IF NOT EXISTS tasks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    bom_line_id INT NOT NULL,
+    project_id INT NOT NULL,
+    missing_fields JSON NOT NULL,
+    owner_id INT NULL,
+    status ENUM('open', 'in progress', 'done') NOT NULL DEFAULT 'open',
+    due_date DATE NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE (bom_line_id),
+    FOREIGN KEY (bom_line_id)
+        REFERENCES project_materials(id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (project_id)
+        REFERENCES projects(id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (owner_id)
+        REFERENCES users(id)
+        ON DELETE SET NULL
 );
 
 -- Project measurement points

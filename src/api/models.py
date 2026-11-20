@@ -1,6 +1,7 @@
 from datetime import date
 
 from flask_login import UserMixin
+from sqlalchemy import CheckConstraint
 from .extensions import db, login_manager
 from .lib.material_fields import SOURCING_STATUSES
 
@@ -37,6 +38,7 @@ class Project(db.Model):
     weight = db.Column(db.String(100))
     description = db.Column(db.String(1000))
     created_at = db.Column(db.DateTime, server_default=db.func.now())
+    archived = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
 
     colorways = db.relationship(
         "ProjectColor",
@@ -70,6 +72,19 @@ class ProjectColor(db.Model):
     )
 
 
+class Vendor(db.Model):
+    __tablename__ = "vendors"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    contact_name = db.Column(db.String(255))
+    email = db.Column(db.String(255))
+    phone = db.Column(db.String(50))
+    notes = db.Column(db.Text)
+
+    bom_lines = db.relationship("ProjectMaterial", back_populates="vendor")
+
+
 class ProjectMaterial(db.Model):
     __tablename__ = "project_materials"
 
@@ -78,6 +93,11 @@ class ProjectMaterial(db.Model):
         db.Integer,
         db.ForeignKey("project_colors.id", ondelete="CASCADE"),
         nullable=False
+    )
+    vendor_id = db.Column(
+        db.Integer,
+        db.ForeignKey("vendors.id", ondelete="SET NULL"),
+        nullable=True,
     )
     name = db.Column(db.String(50))
     material = db.Column(db.String(100))
@@ -99,6 +119,49 @@ class ProjectMaterial(db.Model):
     import_field_sources = db.Column(db.Text)
 
     colorway = db.relationship("ProjectColor", back_populates="materials")
+    vendor = db.relationship("Vendor", back_populates="bom_lines")
+
+
+class Task(db.Model):
+    __tablename__ = "tasks"
+    __table_args__ = (
+        db.UniqueConstraint("bom_line_id", name="uq_task_bom_line"),
+        CheckConstraint(
+            "status IN ('open', 'in progress', 'done')",
+            name="ck_tasks_status",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    bom_line_id = db.Column(
+        db.Integer,
+        db.ForeignKey("project_materials.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    project_id = db.Column(
+        db.Integer,
+        db.ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    missing_fields = db.Column(db.JSON, nullable=False, default=list)
+    owner_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status = db.Column(db.String(20), nullable=False, default="open")
+    due_date = db.Column(db.Date)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        server_default=db.func.now(),
+        onupdate=db.func.now(),
+    )
+
+    bom_line = db.relationship("ProjectMaterial")
+    owner = db.relationship("User")
 
 
 class ProjectChangeLog(db.Model):

@@ -7,15 +7,18 @@ from typing import List, Optional, Tuple
 from flask import Blueprint, jsonify, request, current_app, send_file, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import case, func, or_
+from sqlalchemy import MetaData, Table, inspect
 
 from src.api.extensions import db
 from src.api.lib.material_fields import SOURCING_STATUSES
 
-from src.api.models import Project, ProjectChangeLog, ProjectColor, ProjectMaterial, ProjectFile, PointsMeasured, ValueSource, User
+from src.api.models import Project, ProjectChangeLog, ProjectColor, ProjectMaterial, ProjectFile, PointsMeasured, Task, ValueSource, User, Vendor
+from src.api.decorators import admin_required
 from src.api.services.provenance import PROJECT_FIELDS, MATERIAL_FIELDS, MEASUREMENT_FIELDS, record_source, serialize_values
 
 from src.api.services.document_import import import_uploaded_document
 from src.api.services.import_errors import DocumentImportError
+from src.api.services.tasks import sync_project_tasks
 
 projects_bp = Blueprint("projects", __name__)
 
@@ -36,7 +39,7 @@ MISSING_BOM_ITEM = or_(
     ProjectMaterial.quantity.is_(None) | (ProjectMaterial.quantity <= 0),
 )
 
-EDITABLE_MATERIAL_FIELDS = set(MATERIAL_FIELDS)
+EDITABLE_MATERIAL_FIELDS = set(MATERIAL_FIELDS) | {"vendor_id"}
 REQUIRED_MATERIAL_FIELDS = {
     "material",
     "supplier",
@@ -185,6 +188,7 @@ def _material_payload(material: ProjectMaterial) -> dict:
     return {
         "id": material.id,
         "colorway_id": material.colorway_id,
+        "vendor_id": material.vendor_id,
         "name": material.name,
         "material": material.material,
         "supplier": material.supplier,
@@ -277,6 +281,15 @@ def _validate_material_changes(
                 return None, f"sourcing_status must be one of: {', '.join(SOURCING_STATUSES)}, or null."
             normalized[field] = value
             continue
+        if field == "vendor_id":
+            if value is None:
+                normalized[field] = None
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                return None, "Vendor ID must be an integer or null."
+            normalized[field] = value
+            continue
+
         if field == "quantity":
             if value is None:
                 normalized[field] = None
@@ -354,6 +367,11 @@ def get_projects():
         .outerjoin(bom_counts, bom_counts.c.project_id == Project.id)
     )
 
+    archived = request.args.get("archived", "false").strip().lower()
+    if archived not in {"true", "false"}:
+        return jsonify({"error": "The archived filter must be true or false."}), 400
+    query = query.filter(Project.archived.is_(archived == "true"))
+
     search = request.args.get("search", "").strip()
     if search:
         escaped_search = (
@@ -399,6 +417,7 @@ def get_projects():
                 "style_no": project.style_no,
                 "description": project.description,
                 "style_description": project.description,
+                "archived": project.archived,
                 "stage": project.status,
                 "po_no": project.po_no,
                 "project_date": (
@@ -414,6 +433,167 @@ def get_projects():
             for project, total, missing in rows
         ]
     }), 200
+
+
+@projects_bp.route("/projects/<int:project_id>/archive", methods=["POST"])
+@login_required
+def archive_project(project_id: int):
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return jsonify({"error": "Project not found."}), 404
+
+    project.archived = True
+    db.session.commit()
+    return jsonify({"project": _project_payload(project)}), 200
+
+
+@projects_bp.route("/projects/<int:project_id>/restore", methods=["POST"])
+@login_required
+def restore_project(project_id: int):
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return jsonify({"error": "Project not found."}), 404
+
+    project.archived = False
+    db.session.commit()
+    return jsonify({"project": _project_payload(project)}), 200
+
+
+def _stored_upload_paths(files: List[ProjectFile]) -> List[Path]:
+    upload_root = _upload_dir().resolve()
+    paths = []
+    for project_file in files:
+        if not project_file.file_path:
+            continue
+        stored_path = Path(project_file.file_path)
+        path = (stored_path if stored_path.is_absolute() else upload_root / stored_path).resolve()
+        if not path.is_relative_to(upload_root):
+            raise ValueError("A stored file is outside the upload directory.")
+        if path.exists() and not path.is_file():
+            raise ValueError("A stored file path is not a regular file.")
+        paths.append(path)
+    return paths
+
+
+def _remove_stored_uploads(paths: List[Path]) -> None:
+    for path in paths:
+        if path.exists():
+            path.unlink()
+
+
+def _optional_project_table(table_name: str):
+    connection = db.session.connection()
+    if table_name not in inspect(connection).get_table_names():
+        return None
+    return Table(table_name, MetaData(), autoload_with=connection)
+
+
+def _delete_optional_project_rows(project_id: int, table_names: Tuple[str, ...]) -> None:
+    for table_name in table_names:
+        table = _optional_project_table(table_name)
+        if table is not None and "project_id" in table.c:
+            db.session.execute(table.delete().where(table.c.project_id == project_id))
+
+
+def _clear_optional_file_references(file_id: int, table_names: Tuple[str, ...]) -> None:
+    for table_name in table_names:
+        table = _optional_project_table(table_name)
+        if table is not None and "file_id" in table.c:
+            db.session.execute(
+                table.update()
+                .where(table.c.file_id == file_id)
+                .values(file_id=None)
+            )
+
+
+@projects_bp.route("/projects/<int:project_id>", methods=["DELETE"])
+@admin_required
+def delete_project(project_id: int):
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return jsonify({"error": "Project not found."}), 404
+
+    files = ProjectFile.query.filter_by(project_id=project_id).all()
+    try:
+        stored_paths = _stored_upload_paths(files)
+        _remove_stored_uploads(stored_paths)
+    except (OSError, ValueError):
+        db.session.rollback()
+        current_app.logger.exception("Could not remove stored files for project %s", project_id)
+        return jsonify({"error": "Project files could not be removed."}), 500
+
+    file_ids = [project_file.id for project_file in files]
+    colorway_ids = [
+        row[0] for row in db.session.query(ProjectColor.id)
+        .filter_by(project_id=project_id)
+        .all()
+    ]
+
+    _delete_optional_project_rows(
+        project_id,
+        ("tasks", "project_tasks", "comments", "project_users"),
+    )
+    if file_ids:
+        ValueSource.query.filter(
+            or_(
+                ValueSource.project_id == project_id,
+                ValueSource.file_id.in_(file_ids),
+            )
+        ).delete(synchronize_session=False)
+    else:
+        ValueSource.query.filter_by(project_id=project_id).delete(
+            synchronize_session=False
+        )
+    ProjectChangeLog.query.filter_by(project_id=project_id).delete(synchronize_session=False)
+    PointsMeasured.query.filter_by(project_id=project_id).delete(synchronize_session=False)
+    if colorway_ids:
+        ProjectMaterial.query.filter(
+            ProjectMaterial.colorway_id.in_(colorway_ids)
+        ).delete(synchronize_session=False)
+    ProjectColor.query.filter_by(project_id=project_id).delete(synchronize_session=False)
+    if file_ids:
+        ProjectFile.query.filter(ProjectFile.source_file_id.in_(file_ids)).update(
+            {ProjectFile.source_file_id: None},
+            synchronize_session=False,
+        )
+    ProjectFile.query.filter_by(project_id=project_id).delete(synchronize_session=False)
+    db.session.execute(
+        Project.__table__.delete().where(Project.id == project_id)
+    )
+    db.session.commit()
+    return jsonify({"deleted": True, "id": project_id}), 200
+
+
+@projects_bp.route(
+    "/projects/<int:project_id>/files/<int:file_id>",
+    methods=["DELETE"],
+)
+@admin_required
+def delete_project_file(project_id: int, file_id: int):
+    project_file = ProjectFile.query.filter_by(
+        id=file_id,
+        project_id=project_id,
+    ).first()
+    if project_file is None:
+        return jsonify({"error": "Project file not found."}), 404
+
+    try:
+        stored_paths = _stored_upload_paths([project_file])
+        _remove_stored_uploads(stored_paths)
+    except (OSError, ValueError):
+        db.session.rollback()
+        current_app.logger.exception("Could not remove stored file %s", file_id)
+        return jsonify({"error": "Project file could not be removed."}), 500
+
+    _clear_optional_file_references(file_id, ("comments",))
+    ValueSource.query.filter_by(file_id=file_id).delete(synchronize_session=False)
+    ProjectFile.query.filter_by(source_file_id=file_id).update(
+        {ProjectFile.source_file_id: None},
+        synchronize_session=False,
+    )
+    db.session.delete(project_file)
+    db.session.commit()
+    return jsonify({"deleted": True, "id": file_id}), 200
 
 
 @projects_bp.route("/projects/<int:project_id>/images", methods=["GET"])
@@ -532,12 +712,17 @@ def update_material(material_id: int):
     normalized, error = _validate_material_changes(changes)
     if error:
         return jsonify({"error": error}), 400
+    if normalized.get("vendor_id") is not None and db.session.get(
+        Vendor, normalized["vendor_id"]
+    ) is None:
+        return jsonify({"error": "Vendor not found."}), 404
 
     old_values = {field: getattr(material, field) for field in normalized}
     project_id = material.colorway.project_id
     for field, value in normalized.items():
         setattr(material, field, value)
-        record_source(project_id, "material", material.id, field, kind="manual", user_id=current_user.id)
+        if field in MATERIAL_FIELDS:
+            record_source(project_id, "material", material.id, field, kind="manual", user_id=current_user.id)
     db.session.add_all(_change_entries(
         project_id=project_id,
         user_id=current_user.id,
@@ -547,6 +732,7 @@ def update_material(material_id: int):
         old_values=old_values,
     ))
 
+    sync_project_tasks(project_id)
     db.session.commit()
     return _bom_line_response(material, project_id), 200
 
@@ -579,12 +765,17 @@ def create_bom_line(project_id: int):
     normalized, error = _validate_material_changes(body)
     if error:
         return jsonify({"error": error}), 400
+    if normalized.get("vendor_id") is not None and db.session.get(
+        Vendor, normalized["vendor_id"]
+    ) is None:
+        return jsonify({"error": "Vendor not found."}), 404
 
     material = ProjectMaterial(colorway=colorway, **normalized)
     db.session.add(material)
     db.session.flush()
     for field in normalized:
-        record_source(project_id, "material", material.id, field, kind="manual", user_id=current_user.id)
+        if field in MATERIAL_FIELDS:
+            record_source(project_id, "material", material.id, field, kind="manual", user_id=current_user.id)
     db.session.add_all(_change_entries(
         project_id=project_id,
         user_id=current_user.id,
@@ -592,6 +783,7 @@ def create_bom_line(project_id: int):
         material_id=material.id,
         values={field: getattr(material, field) for field in MATERIAL_FIELDS},
     ))
+    sync_project_tasks(project_id)
     db.session.commit()
     return _bom_line_response(material, project_id), 201
 
@@ -614,6 +806,7 @@ def delete_bom_line(material_id: int):
         old_values=old_values,
     ))
     ValueSource.query.filter_by(project_id=project_id, entity_type="material", entity_id=material.id).delete()
+    Task.query.filter_by(bom_line_id=material.id).delete(synchronize_session=False)
     db.session.delete(material)
     db.session.commit()
     return jsonify({
@@ -731,6 +924,7 @@ def _project_payload(project: Project) -> dict:
         "designer": project.designer,
         "weight": project.weight,
         "description": project.description,
+        "archived": project.archived,
     }
 
 
@@ -802,18 +996,25 @@ def update_values(project_id, material_id=None, point_id=None):
     if entity is None:
         return jsonify(error="Value record not found."), 404
     data = request.get_json(silent=True)
-    if not isinstance(data, dict) or not data or any(k not in fields for k in data):
+    allowed_fields = set(fields) | {"vendor_id"} if kind == "material" else fields
+    if not isinstance(data, dict) or not data or any(k not in allowed_fields for k in data):
         return jsonify(error="Provide supported fields to update."), 400
     if kind == "material":
         normalized, error = _validate_material_changes(data)
         if error:
             return jsonify(error=error), 400
+        if normalized.get("vendor_id") is not None and db.session.get(
+            Vendor, normalized["vendor_id"]
+        ) is None:
+            return jsonify(error="Vendor not found."), 404
         old_values = {field: getattr(entity, field) for field in normalized}
         for field, value in normalized.items():
             setattr(entity, field, value)
-            record_source(project_id, kind, entity.id, field, kind="manual", user_id=current_user.id)
+            if field in MATERIAL_FIELDS:
+                record_source(project_id, kind, entity.id, field, kind="manual", user_id=current_user.id)
         db.session.add_all(_change_entries(project_id=project_id, user_id=current_user.id,
                            action="updated", material_id=entity.id, values=normalized, old_values=old_values))
+        sync_project_tasks(project_id)
         db.session.commit()
         return project_dashboard(project_id)
     from datetime import date
