@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS projects (
     designer VARCHAR(100),
     weight VARCHAR(100),
     description VARCHAR(1000),
+    archived BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

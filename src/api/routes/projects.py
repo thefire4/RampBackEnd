@@ -7,10 +7,12 @@ from typing import List, Optional, Tuple
 from flask import Blueprint, jsonify, request, current_app, send_file, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import case, func, or_
+from sqlalchemy import MetaData, Table, inspect
 
 from src.api.extensions import db
 
 from src.api.models import Project, ProjectChangeLog, ProjectColor, ProjectMaterial, ProjectFile, PointsMeasured, ValueSource, User
+from src.api.decorators import admin_required
 from src.api.services.provenance import PROJECT_FIELDS, MATERIAL_FIELDS, MEASUREMENT_FIELDS, record_source, serialize_values
 
 from src.api.services.document_import import import_uploaded_document
@@ -326,6 +328,11 @@ def get_projects():
         .outerjoin(bom_counts, bom_counts.c.project_id == Project.id)
     )
 
+    archived = request.args.get("archived", "false").strip().lower()
+    if archived not in {"true", "false"}:
+        return jsonify({"error": "The archived filter must be true or false."}), 400
+    query = query.filter(Project.archived.is_(archived == "true"))
+
     search = request.args.get("search", "").strip()
     if search:
         escaped_search = (
@@ -371,6 +378,7 @@ def get_projects():
                 "style_no": project.style_no,
                 "description": project.description,
                 "style_description": project.description,
+                "archived": project.archived,
                 "stage": project.status,
                 "po_no": project.po_no,
                 "project_date": (
@@ -386,6 +394,167 @@ def get_projects():
             for project, total, missing in rows
         ]
     }), 200
+
+
+@projects_bp.route("/projects/<int:project_id>/archive", methods=["POST"])
+@login_required
+def archive_project(project_id: int):
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return jsonify({"error": "Project not found."}), 404
+
+    project.archived = True
+    db.session.commit()
+    return jsonify({"project": _project_payload(project)}), 200
+
+
+@projects_bp.route("/projects/<int:project_id>/restore", methods=["POST"])
+@login_required
+def restore_project(project_id: int):
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return jsonify({"error": "Project not found."}), 404
+
+    project.archived = False
+    db.session.commit()
+    return jsonify({"project": _project_payload(project)}), 200
+
+
+def _stored_upload_paths(files: List[ProjectFile]) -> List[Path]:
+    upload_root = _upload_dir().resolve()
+    paths = []
+    for project_file in files:
+        if not project_file.file_path:
+            continue
+        stored_path = Path(project_file.file_path)
+        path = (stored_path if stored_path.is_absolute() else upload_root / stored_path).resolve()
+        if not path.is_relative_to(upload_root):
+            raise ValueError("A stored file is outside the upload directory.")
+        if path.exists() and not path.is_file():
+            raise ValueError("A stored file path is not a regular file.")
+        paths.append(path)
+    return paths
+
+
+def _remove_stored_uploads(paths: List[Path]) -> None:
+    for path in paths:
+        if path.exists():
+            path.unlink()
+
+
+def _optional_project_table(table_name: str):
+    connection = db.session.connection()
+    if table_name not in inspect(connection).get_table_names():
+        return None
+    return Table(table_name, MetaData(), autoload_with=connection)
+
+
+def _delete_optional_project_rows(project_id: int, table_names: Tuple[str, ...]) -> None:
+    for table_name in table_names:
+        table = _optional_project_table(table_name)
+        if table is not None and "project_id" in table.c:
+            db.session.execute(table.delete().where(table.c.project_id == project_id))
+
+
+def _clear_optional_file_references(file_id: int, table_names: Tuple[str, ...]) -> None:
+    for table_name in table_names:
+        table = _optional_project_table(table_name)
+        if table is not None and "file_id" in table.c:
+            db.session.execute(
+                table.update()
+                .where(table.c.file_id == file_id)
+                .values(file_id=None)
+            )
+
+
+@projects_bp.route("/projects/<int:project_id>", methods=["DELETE"])
+@admin_required
+def delete_project(project_id: int):
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return jsonify({"error": "Project not found."}), 404
+
+    files = ProjectFile.query.filter_by(project_id=project_id).all()
+    try:
+        stored_paths = _stored_upload_paths(files)
+        _remove_stored_uploads(stored_paths)
+    except (OSError, ValueError):
+        db.session.rollback()
+        current_app.logger.exception("Could not remove stored files for project %s", project_id)
+        return jsonify({"error": "Project files could not be removed."}), 500
+
+    file_ids = [project_file.id for project_file in files]
+    colorway_ids = [
+        row[0] for row in db.session.query(ProjectColor.id)
+        .filter_by(project_id=project_id)
+        .all()
+    ]
+
+    _delete_optional_project_rows(
+        project_id,
+        ("tasks", "project_tasks", "comments", "project_users"),
+    )
+    if file_ids:
+        ValueSource.query.filter(
+            or_(
+                ValueSource.project_id == project_id,
+                ValueSource.file_id.in_(file_ids),
+            )
+        ).delete(synchronize_session=False)
+    else:
+        ValueSource.query.filter_by(project_id=project_id).delete(
+            synchronize_session=False
+        )
+    ProjectChangeLog.query.filter_by(project_id=project_id).delete(synchronize_session=False)
+    PointsMeasured.query.filter_by(project_id=project_id).delete(synchronize_session=False)
+    if colorway_ids:
+        ProjectMaterial.query.filter(
+            ProjectMaterial.colorway_id.in_(colorway_ids)
+        ).delete(synchronize_session=False)
+    ProjectColor.query.filter_by(project_id=project_id).delete(synchronize_session=False)
+    if file_ids:
+        ProjectFile.query.filter(ProjectFile.source_file_id.in_(file_ids)).update(
+            {ProjectFile.source_file_id: None},
+            synchronize_session=False,
+        )
+    ProjectFile.query.filter_by(project_id=project_id).delete(synchronize_session=False)
+    db.session.execute(
+        Project.__table__.delete().where(Project.id == project_id)
+    )
+    db.session.commit()
+    return jsonify({"deleted": True, "id": project_id}), 200
+
+
+@projects_bp.route(
+    "/projects/<int:project_id>/files/<int:file_id>",
+    methods=["DELETE"],
+)
+@admin_required
+def delete_project_file(project_id: int, file_id: int):
+    project_file = ProjectFile.query.filter_by(
+        id=file_id,
+        project_id=project_id,
+    ).first()
+    if project_file is None:
+        return jsonify({"error": "Project file not found."}), 404
+
+    try:
+        stored_paths = _stored_upload_paths([project_file])
+        _remove_stored_uploads(stored_paths)
+    except (OSError, ValueError):
+        db.session.rollback()
+        current_app.logger.exception("Could not remove stored file %s", file_id)
+        return jsonify({"error": "Project file could not be removed."}), 500
+
+    _clear_optional_file_references(file_id, ("comments",))
+    ValueSource.query.filter_by(file_id=file_id).delete(synchronize_session=False)
+    ProjectFile.query.filter_by(source_file_id=file_id).update(
+        {ProjectFile.source_file_id: None},
+        synchronize_session=False,
+    )
+    db.session.delete(project_file)
+    db.session.commit()
+    return jsonify({"deleted": True, "id": file_id}), 200
 
 
 @projects_bp.route("/projects/<int:project_id>/images", methods=["GET"])
@@ -703,6 +872,7 @@ def _project_payload(project: Project) -> dict:
         "designer": project.designer,
         "weight": project.weight,
         "description": project.description,
+        "archived": project.archived,
     }
 
 
