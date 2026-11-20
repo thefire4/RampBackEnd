@@ -10,6 +10,7 @@ from src.api.models import (
     ProjectColor,
     ProjectFile,
     ProjectMaterial,
+    Task,
     User,
     ValueSource,
 )
@@ -86,9 +87,6 @@ def test_admin_project_delete_removes_related_rows_and_stored_files(
 
     with app.app_context():
         db.session.execute(db.text(
-            "CREATE TABLE tasks (id INTEGER PRIMARY KEY, project_id INTEGER)"
-        ))
-        db.session.execute(db.text(
             "CREATE TABLE comments (id INTEGER PRIMARY KEY, project_id INTEGER, file_id INTEGER)"
         ))
         db.session.execute(db.text(
@@ -101,6 +99,12 @@ def test_admin_project_delete_removes_related_rows_and_stored_files(
         measurement = PointsMeasured(project=project, code="A")
         db.session.add_all([project, other_project, material, measurement])
         db.session.flush()
+        task = Task(
+            project_id=project.id,
+            bom_line_id=material.id,
+            missing_fields=["supplier"],
+        )
+        db.session.add(task)
         source_file = ProjectFile(
             project_id=project.id,
             user_id=admin.id,
@@ -149,10 +153,6 @@ def test_admin_project_delete_removes_related_rows_and_stored_files(
                 entity_type="project",
             ),
         ])
-        db.session.execute(
-            db.text("INSERT INTO tasks (project_id) VALUES (:project_id)"),
-            {"project_id": project.id},
-        )
         db.session.execute(
             db.text(
                 "INSERT INTO comments (project_id, file_id) "

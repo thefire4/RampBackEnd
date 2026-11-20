@@ -1,6 +1,7 @@
 from datetime import date
 
 from flask_login import UserMixin
+from sqlalchemy import CheckConstraint
 from .extensions import db, login_manager
 
 
@@ -114,6 +115,48 @@ class ProjectMaterial(db.Model):
 
     colorway = db.relationship("ProjectColor", back_populates="materials")
     vendor = db.relationship("Vendor", back_populates="bom_lines")
+
+
+class Task(db.Model):
+    __tablename__ = "tasks"
+    __table_args__ = (
+        db.UniqueConstraint("bom_line_id", name="uq_task_bom_line"),
+        CheckConstraint(
+            "status IN ('open', 'in progress', 'done')",
+            name="ck_tasks_status",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    bom_line_id = db.Column(
+        db.Integer,
+        db.ForeignKey("project_materials.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    project_id = db.Column(
+        db.Integer,
+        db.ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    missing_fields = db.Column(db.JSON, nullable=False, default=list)
+    owner_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status = db.Column(db.String(20), nullable=False, default="open")
+    due_date = db.Column(db.Date)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        server_default=db.func.now(),
+        onupdate=db.func.now(),
+    )
+
+    bom_line = db.relationship("ProjectMaterial")
+    owner = db.relationship("User")
 
 
 class ProjectChangeLog(db.Model):

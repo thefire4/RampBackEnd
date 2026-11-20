@@ -8,10 +8,10 @@ from sqlalchemy.orm import joinedload
 from src.api.extensions import db
 from src.api.models import Project, ProjectFile, ProjectColor, ProjectMaterial, ValueSource
 from src.api.services.provenance import serialize_values
+from src.api.services.tasks import missing_bom_fields
 from src.api.routes.projects import (
     MATERIAL_FIELDS,
     MISSING_BOM_ITEM,
-    REQUIRED_MATERIAL_FIELDS,
     _completeness,
     _material_payload,
     _missing_bom_count,
@@ -42,15 +42,8 @@ def _iso(value):
     return value.isoformat() if value else None
 
 
-def _is_blank(value):
-    return value is None or (isinstance(value, str) and not value.strip())
-
-
 def missing_fields(material):
-    missing = [f for f in MATERIAL_FIELDS if f in REQUIRED_MATERIAL_FIELDS and _is_blank(getattr(material, f))]
-    if material.quantity is None or material.quantity <= 0:
-        missing.append("quantity")
-    return missing
+    return missing_bom_fields(material)
 
 
 def _project_payload(project):

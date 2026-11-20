@@ -11,12 +11,13 @@ from sqlalchemy import MetaData, Table, inspect
 
 from src.api.extensions import db
 
-from src.api.models import Project, ProjectChangeLog, ProjectColor, ProjectMaterial, ProjectFile, PointsMeasured, ValueSource, User, Vendor
+from src.api.models import Project, ProjectChangeLog, ProjectColor, ProjectMaterial, ProjectFile, PointsMeasured, Task, ValueSource, User, Vendor
 from src.api.decorators import admin_required
 from src.api.services.provenance import PROJECT_FIELDS, MATERIAL_FIELDS, MEASUREMENT_FIELDS, record_source, serialize_values
 
 from src.api.services.document_import import import_uploaded_document
 from src.api.services.import_errors import DocumentImportError
+from src.api.services.tasks import sync_project_tasks
 
 projects_bp = Blueprint("projects", __name__)
 
@@ -703,6 +704,7 @@ def update_material(material_id: int):
         old_values=old_values,
     ))
 
+    sync_project_tasks(project_id)
     db.session.commit()
     return _bom_line_response(material, project_id), 200
 
@@ -753,6 +755,7 @@ def create_bom_line(project_id: int):
         material_id=material.id,
         values={field: getattr(material, field) for field in MATERIAL_FIELDS},
     ))
+    sync_project_tasks(project_id)
     db.session.commit()
     return _bom_line_response(material, project_id), 201
 
@@ -775,6 +778,7 @@ def delete_bom_line(material_id: int):
         old_values=old_values,
     ))
     ValueSource.query.filter_by(project_id=project_id, entity_type="material", entity_id=material.id).delete()
+    Task.query.filter_by(bom_line_id=material.id).delete(synchronize_session=False)
     db.session.delete(material)
     db.session.commit()
     return jsonify({
@@ -982,6 +986,7 @@ def update_values(project_id, material_id=None, point_id=None):
                 record_source(project_id, kind, entity.id, field, kind="manual", user_id=current_user.id)
         db.session.add_all(_change_entries(project_id=project_id, user_id=current_user.id,
                            action="updated", material_id=entity.id, values=normalized, old_values=old_values))
+        sync_project_tasks(project_id)
         db.session.commit()
         return project_dashboard(project_id)
     from datetime import date
